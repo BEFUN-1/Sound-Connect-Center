@@ -1,0 +1,51 @@
+#pragma once
+
+// Minimal std::span-compatible view for older libstdc++ toolchains. The
+// project only needs pointer/length construction and basic iteration.
+#include <cstddef>
+#include <type_traits>
+
+namespace std {
+
+template<class T, std::size_t Extent = static_cast<std::size_t>(-1)>
+class span {
+public:
+    using element_type = T;
+    using value_type = typename std::remove_cv<T>::type;
+    using size_type = std::size_t;
+    using iterator = T*;
+
+    constexpr span() noexcept : _data(nullptr), _size(0) {}
+    constexpr span(T* data, size_type size) noexcept : _data(data), _size(size) {}
+
+    template<class Container>
+    constexpr span(Container& container) noexcept
+        : _data(container.data()), _size(container.size()) {}
+
+    template<class Container>
+    constexpr span(const Container& container) noexcept
+        : _data(container.data()), _size(container.size()) {}
+
+    constexpr T* data() const noexcept { return _data; }
+    constexpr size_type size() const noexcept { return _size; }
+    constexpr bool empty() const noexcept { return _size == 0; }
+    constexpr T& operator[](size_type index) const noexcept { return _data[index]; }
+    constexpr T& front() const noexcept { return _data[0]; }
+    constexpr T& back() const noexcept { return _data[_size - 1]; }
+    constexpr iterator begin() const noexcept { return _data; }
+    constexpr iterator end() const noexcept { return _data + _size; }
+
+    constexpr span<T> subspan(size_type offset) const noexcept {
+        return span<T>(_data + offset, _size - offset);
+    }
+
+    constexpr span<T> subspan(size_type offset, size_type count) const noexcept {
+        return span<T>(_data + offset, count);
+    }
+
+private:
+    T* _data;
+    size_type _size;
+};
+
+} // namespace std

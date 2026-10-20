@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>sonyctl</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../desktop-app/MainForm.cs" Link="MainForm.cs" />
+    <Compile Include="../../desktop-app/SonyCtlSession.cs" Link="SonyCtlSession.cs" />
+  </ItemGroup>
+</Project>

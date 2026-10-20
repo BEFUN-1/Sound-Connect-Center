@@ -1,0 +1,279 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  # v0.1.1 shipped assets named 0.1.0 because the tag was bumped and
+  # project(VERSION) was not. Catch that before anything is built.
+  check-version:
+    name: Tag matches project version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          proj=$(sed -n 's/^project(SonyDeviceCenter VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          echo "tag=$tag project=$proj"
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$tag" != "$proj" ]; then
+            echo "::error::tag v$tag does not match project(VERSION $proj) in CMakeLists.txt"
+            exit 1
+          fi
+
+  linux:
+    name: Linux packages (DEB, RPM, TGZ)
+    needs: check-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install build and packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake rpm \
+            libbluetooth-dev libdbus-1-dev \
+            libglew-dev libglfw3-dev libgl1-mesa-dev \
+            qt6-base-dev qt6-declarative-dev
+
+      # Packaging builds do not run the suite, so tests are left out of the
+      # configure entirely rather than built and skipped.
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DBUILD_TESTING=OFF -DSONY_REQUIRE_QT=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Package
+        run: cd build && cpack -G "DEB;RPM;TGZ"
+
+      - name: Collect
+        run: |
+          mkdir -p dist
+          cp build/*.deb build/*.rpm build/*.tar.gz dist/
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages
+          path: dist/
+
+  windows:
+    name: Windows installer (MSI, ZIP)
+    needs: check-version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      # qtdeclarative ships inside the Qt 6 desktop base archive; naming it as
+      # an optional module makes aqtinstall fail with "not available".
+      # v0.1.1 and v0.1.2 shipped Qt 6.8.3, affected by CVE-2025-12385 and
+      # CVE-2025-10729. Those are fixed in 6.8.5/6.8.6 — but 6.8 is an LTS and
+      # the open-source mirror stops at 6.8.3, so the fixes are unreachable on
+      # that line. Hence 6.10.x, which is current and post-dates them.
+      # `aqt list-qt windows desktop` is the way to check what is actually
+      # published before changing this.
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.10.*'
+          arch: 'win64_msvc2022_64'
+
+      # CPack's WIX generator drives candle.exe/light.exe, which only exist in
+      # WiX 3 - WiX 4+ replaced them with a different CLI. Install it if the
+      # runner image does not already carry it.
+      - name: Ensure WiX 3 is available
+        shell: pwsh
+        run: |
+          function Find-Wix {
+            Get-ChildItem 'C:\Program Files (x86)' -Filter 'WiX Toolset*' -Directory -ErrorAction SilentlyContinue |
+              Sort-Object Name | Select-Object -Last 1
+          }
+          $wix = Find-Wix
+          if (-not $wix) {
+            Write-Host 'WiX 3 not present on the image; installing via chocolatey'
+            choco install wixtoolset --version=3.14.1 -y --no-progress
+            $wix = Find-Wix
+          }
+          if (-not $wix) { throw 'WiX 3 could not be installed' }
+          $bin = Join-Path $wix.FullName 'bin'
+          if (-not (Test-Path (Join-Path $bin 'candle.exe'))) {
+            throw "candle.exe not found under $bin"
+          }
+          Write-Host "Using $bin"
+          $bin | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Configure
+        shell: bash
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DBUILD_TESTING=OFF \
+                -DSONY_REQUIRE_QT=ON -DCMAKE_PREFIX_PATH="${QT_ROOT_DIR}"
+
+      - name: Build
+        shell: bash
+        run: cmake --build build --config ${BUILD_TYPE} --parallel
+
+      - name: Package
+        shell: bash
+        run: cd build && cpack -C ${BUILD_TYPE} -G "WIX;ZIP"
+
+      # v0.1.0 shipped an app that could not start because the MSVC runtime
+      # was missing. Assert on the produced archive so that fails the build
+      # here instead of on a user's desktop.
+      - name: Verify the package is self-contained
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = Get-ChildItem build/*.zip | Select-Object -First 1
+          if (-not $zip) { throw 'no ZIP produced' }
+          $archive = [IO.Compression.ZipFile]::OpenRead($zip.FullName)
+          $names = $archive.Entries.Name
+          $required = @(
+            'sony-device-center.exe', 'sonyd.exe', 'sonyctl.exe',
+            'Qt6Core.dll', 'Qt6Quick.dll', 'Qt6QuickControls2.dll',
+            'MSVCP140.dll', 'VCRUNTIME140.dll', 'VCRUNTIME140_1.dll'
+          )
+          $missing = $required | Where-Object { $names -notcontains $_ }
+          $archive.Dispose()
+          if ($missing) { throw "missing from $($zip.Name): $($missing -join ', ')" }
+          Write-Host "$($zip.Name) contains all required binaries and runtime"
+
+      - name: Collect
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp build/*.msi build/*.zip dist/
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-packages
+          path: dist/
+
+  macos:
+    name: macOS disk image (DMG)
+    needs: check-version
+    runs-on: macos-latest
+    env:
+      # Opt in only after configuring the six secrets in packaging/README.md.
+      # Once enabled, missing credentials or failed trust checks stop release.
+      SONY_REQUIRE_NOTARIZATION: ${{ vars.SONY_MACOS_SIGNING_ENABLED == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      # Same Qt line as Windows, for the same CVE reasons. The macOS archive
+      # is universal, so one DMG serves Apple silicon and Intel.
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.10.*'
+          arch: 'clang_64'
+
+      - name: Install dmgbuild
+        run: pipx install dmgbuild
+
+      - name: Configure
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DBUILD_TESTING=OFF \
+                -DSONY_REQUIRE_QT=ON -DCMAKE_PREFIX_PATH="${QT_ROOT_DIR}" \
+                -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Prepare Developer ID signing and notarization
+        if: env.SONY_REQUIRE_NOTARIZATION == 'true'
+        env:
+          SONY_MACOS_CERTIFICATE_BASE64: ${{ secrets.SONY_MACOS_CERTIFICATE_BASE64 }}
+          SONY_MACOS_CERTIFICATE_PASSWORD: ${{ secrets.SONY_MACOS_CERTIFICATE_PASSWORD }}
+          SONY_CODESIGN_IDENTITY: ${{ secrets.SONY_CODESIGN_IDENTITY }}
+          SONY_NOTARY_KEY_BASE64: ${{ secrets.SONY_NOTARY_KEY_BASE64 }}
+          SONY_NOTARY_KEY_ID: ${{ secrets.SONY_NOTARY_KEY_ID }}
+          SONY_NOTARY_ISSUER_ID: ${{ secrets.SONY_NOTARY_ISSUER_ID }}
+        run: bash packaging/macos/prepare-signing.sh
+
+      - name: Package
+        run: cmake --build build --target dmg
+
+      - name: Verify the disk image is self-contained
+        run: packaging/macos/verify-dmg.sh build/*.dmg arm64 x86_64
+
+      - name: Collect
+        run: |
+          mkdir -p dist
+          cp build/*.dmg dist/
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-packages
+          path: dist/
+
+      - name: Remove signing credentials
+        if: always() && env.SONY_REQUIRE_NOTARIZATION == 'true'
+        run: |
+          keychain="$RUNNER_TEMP/sony-macos-signing.keychain-db"
+          if [ -f "$keychain" ]; then
+            security delete-keychain "$keychain"
+          fi
+          rm -f "$RUNNER_TEMP/sony-macos-signing.p12" "$RUNNER_TEMP/sony-macos-notary.p8"
+
+  publish:
+    name: Publish GitHub release
+    needs: [linux, windows, macos]
+    # A manual run builds everything and stops here; only a tag publishes.
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten
+        run: |
+          mkdir -p dist
+          find artifacts -type f -exec cp {} dist/ \;
+          ls -la dist
+
+      # --generate-notes on its own produces a bare PR changelog and silently
+      # ignores the annotated tag message, so the notes are assembled here:
+      # a maintained header plus GitHub's generated changelog.
+      - name: Build release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="$TAG" --jq .body > generated.md
+          cat .github/release-notes-header.md generated.md > notes.md
+          cat notes.md
+
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+            gh release edit "$TAG" --notes-file notes.md
+          else
+            gh release create "$TAG" dist/* --title "$TAG" --notes-file notes.md
+          fi

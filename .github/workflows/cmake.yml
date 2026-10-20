@@ -1,0 +1,144 @@
+name: CI (Linux, Windows, macOS)
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - 'feature/**'
+      - 'refactor/**'
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  build-and-test:
+    name: Build & Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            artifact_name: sony-device-center-linux-x64
+            install_deps: |
+              sudo apt-get update
+              sudo apt-get install -y libbluetooth-dev libglew-dev libglfw3-dev libdbus-1-dev qt6-base-dev qt6-declarative-dev libgl1-mesa-dev \
+                qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-templates \
+                qml6-module-qtquick-layouts qml6-module-qtquick-shapes qml6-module-qtquick-window \
+                qml6-module-qtqml-workerscript
+            cmake_args: ""
+          - os: windows-latest
+            artifact_name: sony-device-center-win-x64
+            install_deps: ""
+            cmake_args: ""
+          - os: macos-latest
+            artifact_name: sony-device-center-macos-x64
+            install_deps: |
+              brew install qt@6
+            cmake_args: "-DCMAKE_PREFIX_PATH=$(brew --prefix qt@6)"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install dependencies
+        if: matrix.install_deps != ''
+        shell: bash
+        run: |
+          ${{ matrix.install_deps }}
+
+      - name: Test macOS packaging failure paths
+        if: runner.os == 'Linux' || runner.os == 'macOS'
+        run: python3 -m unittest discover -s tests -p 'test_macos_packaging.py' -v
+
+      - name: Install Qt (Windows)
+        if: runner.os == 'Windows'
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.10.*'
+          arch: win64_msvc2022_64
+          cache: true
+
+      - name: Configure CMake
+        shell: bash
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DBUILD_TESTING=ON -DSONY_REQUIRE_QT=ON ${{ matrix.cmake_args }}
+
+      - name: Build all targets
+        shell: bash
+        run: |
+          cmake --build build --config ${BUILD_TYPE}
+
+      - name: Run unit & protocol tests
+        shell: bash
+        run: |
+          ctest --test-dir build -C ${BUILD_TYPE} --output-on-failure --no-tests=error
+
+      # The DMG is built on every push so packaging breakage shows up in the
+      # PR, not at release time. It is also the download for macOS testers.
+      - name: Build and verify the disk image (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          pipx install dmgbuild
+          cmake --build build --target dmg
+          packaging/macos/verify-dmg.sh build/*.dmg
+
+      - name: Package artifacts
+        shell: bash
+        run: |
+          mkdir -p staging
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            find build -name "*.exe" -exec cp {} staging/ \; || true
+          elif [ "${{ matrix.os }}" = "macos-latest" ]; then
+            cp build/*.dmg staging/
+          else
+            find build/apps -maxdepth 3 -type f -executable -exec cp {} staging/ \; || true
+          fi
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: staging/
+          if-no-files-found: ignore
+
+  sanitizers:
+    name: Sanitizers (Linux ASan & UBSan)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libbluetooth-dev libglew-dev libglfw3-dev libdbus-1-dev qt6-base-dev qt6-declarative-dev libgl1-mesa-dev
+
+      - name: Configure with ASan and UBSan
+        run: |
+          cmake -B build-asan -DCMAKE_BUILD_TYPE=Debug -DENABLE_SANITIZERS=ON -DBUILD_TESTING=ON
+
+      - name: Build tests with sanitizers
+        run: |
+          cmake --build build-asan --target sony-protocol-tests sony-transport-tests sony-core-tests
+
+      # Only the three library test targets are built above, so the app-level
+      # tests have no binary to start. The regular matrix job covers them.
+      - name: Run tests with sanitizers
+        env:
+          ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1"
+          UBSAN_OPTIONS: "print_stacktrace=1:halt_on_error=1"
+        run: |
+          ctest --test-dir build-asan --output-on-failure --no-tests=error \
+            -E '^(simulated-app-smoke|device-controller-worker-integration)$'

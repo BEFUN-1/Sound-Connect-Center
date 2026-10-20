@@ -1,0 +1,450 @@
+#include "sony/core/IpcProtocol.h"
+#include "sony/core/JsonProtocol.h"
+#include "sony/protocol/MultipointCodec.h"
+#include "sony/protocol/EqualizerPresets.h"
+#include <algorithm>
+#include <sstream>
+
+namespace sony::core {
+
+namespace {
+
+std::vector<std::string> splitTokens(std::string_view str) {
+    std::vector<std::string> tokens;
+    std::string cur;
+    for (char c : str) {
+        if (std::isspace(static_cast<unsigned char>(c))) {
+            if (!cur.empty()) {
+                tokens.push_back(std::move(cur));
+                cur.clear();
+            }
+        } else {
+            cur += c;
+        }
+    }
+    if (!cur.empty()) {
+        tokens.push_back(std::move(cur));
+    }
+    return tokens;
+}
+
+std::string toLower(std::string_view s) {
+    std::string res(s);
+    std::transform(res.begin(), res.end(), res.begin(), [](unsigned char c) {
+        return std::tolower(c);
+    });
+    return res;
+}
+
+int parsePresetName(std::string_view name) {
+    return protocol::equalizerPresetFromName(name);
+}
+
+std::string presetToString(int preset) {
+    return protocol::equalizerPresetName(preset);
+}
+
+} // namespace
+
+std::string IpcProtocol::executeLine(std::string_view line, IDeviceService& service) {
+    auto start = line.find_first_not_of(" \r\t");
+    if (start != std::string_view::npos && (line[start] == '{' || line[start] == '[')) return JsonProtocol::executeLine(line, service);
+    return serializeResponse(execute(parseCommand(line), service));
+}
+
+IpcCommand IpcProtocol::parseCommand(std::string_view line) {
+    IpcCommand cmd;
+    cmd.raw = std::string(line);
+    auto tokens = splitTokens(line);
+    if (tokens.empty()) {
+        return cmd;
+    }
+
+    std::string verb = toLower(tokens[0]);
+    if (verb == "devices") {
+        cmd.type = IpcCommandType::Devices;
+    } else if (verb == "info") {
+        cmd.type = IpcCommandType::Info;
+    } else if (verb == "battery") {
+        cmd.type = IpcCommandType::Battery;
+    } else if (verb == "anc") {
+        cmd.type = IpcCommandType::Anc;
+    } else if (verb == "ambient") {
+        cmd.type = IpcCommandType::Ambient;
+    } else if (verb == "eq") {
+        if (tokens.size() > 1 && toLower(tokens[1]) == "get") {
+            cmd.type = IpcCommandType::EqGet;
+        } else if (tokens.size() > 1 && toLower(tokens[1]) == "preset") {
+            cmd.type = IpcCommandType::EqPreset;
+        } else if (tokens.size() > 1 && toLower(tokens[1]) == "custom") {
+            cmd.type = IpcCommandType::EqCustom;
+        } else {
+            cmd.type = IpcCommandType::EqPreset;
+        }
+    } else if (verb == "dsee") {
+        cmd.type = IpcCommandType::Dsee;
+    } else if (verb == "autopoweroff" || verb == "apo") {
+        cmd.type = IpcCommandType::AutoPowerOff;
+    } else if (verb == "poweroff" || verb == "power-off" || verb == "shutdown") {
+        cmd.type = IpcCommandType::PowerOff;
+    } else if (verb == "status") {
+        cmd.type = IpcCommandType::Status;
+    } else if (verb == "dashboard") {
+        cmd.type = IpcCommandType::Dashboard;
+    } else if (verb == "multipoint") {
+        cmd.type = IpcCommandType::Multipoint;
+    }
+
+    if (tokens.size() > 1) {
+        cmd.args.assign(tokens.begin() + 1, tokens.end());
+    }
+
+    return cmd;
+}
+
+std::string IpcProtocol::serializeResponse(const IpcResponse& response) {
+    std::string encodedData = response.data;
+    for (char& c : encodedData) {
+        if (c == '\n') c = '\x1e';
+    }
+    std::ostringstream oss;
+    oss << (response.success ? "OK" : "ERR") << "|"
+        << response.message << "|"
+        << encodedData << "\n";
+    return oss.str();
+}
+
+IpcResponse IpcProtocol::parseResponse(std::string_view line) {
+    IpcResponse resp;
+    while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
+        line.remove_suffix(1);
+    }
+    size_t firstPipe = line.find('|');
+    if (firstPipe == std::string_view::npos) {
+        resp.success = false;
+        resp.message = std::string(line);
+        return resp;
+    }
+
+    auto status = line.substr(0, firstPipe);
+    resp.success = (status == "OK");
+
+    size_t secondPipe = line.find('|', firstPipe + 1);
+    if (secondPipe == std::string_view::npos) {
+        resp.message = std::string(line.substr(firstPipe + 1));
+    } else {
+        resp.message = std::string(line.substr(firstPipe + 1, secondPipe - firstPipe - 1));
+        std::string rawData = std::string(line.substr(secondPipe + 1));
+        for (char& c : rawData) {
+            if (c == '\x1e') c = '\n';
+        }
+        resp.data = std::move(rawData);
+    }
+
+    return resp;
+}
+
+IpcResponse IpcProtocol::execute(const IpcCommand& cmd, IDeviceService& service) {
+    IpcResponse resp;
+
+    if (cmd.type == IpcCommandType::Devices) {
+        auto devs = service.discoverDevices();
+        std::ostringstream oss;
+        for (size_t i = 0; i < devs.size(); ++i) {
+            oss << devs[i].name << " [" << devs[i].address << "]";
+            if (i + 1 < devs.size()) oss << "\n";
+        }
+        resp.success = true;
+        resp.message = std::to_string(devs.size()) + " devices found";
+        resp.data = oss.str();
+        return resp;
+    }
+
+    auto* dev = service.activeDevice();
+    if (cmd.type == IpcCommandType::Status) {
+        resp.success = service.isConnected();
+        resp.message = resp.success ? "Connected" : dev ? "Device disconnected" : "No device selected";
+        if (dev) resp.data = "model=" + dev->name();
+        return resp;
+    }
+    if (!dev || !dev->isConnected()) {
+        resp.success = false;
+        resp.message = "No device connected";
+        return resp;
+    }
+
+    auto snap = dev->snapshot();
+
+    try {
+        switch (cmd.type) {
+        case IpcCommandType::Dashboard: {
+            dev->refreshMultipoint();
+            resp.data = JsonProtocol::snapshot(service).dump(-1, ' ', false, JsonProtocol::Json::error_handler_t::replace);
+            resp.success = true;
+            return resp;
+        }
+        case IpcCommandType::Multipoint: {
+            const auto action = cmd.args.empty() ? "list" : toLower(cmd.args[0]);
+            dev->refreshMultipoint();
+            const auto state = dev->snapshot()->multipoint;
+            if (!state.supported) throw SonyException(SonyErrorCode::Unsupported,
+                state.error.empty() ? "Headset does not advertise multipoint management" : state.error);
+            if (action == "list") {}
+            else if (action == "auto") dev->setMultipointSourceKeeping(false);
+            else {
+                if (cmd.args.size() != 2) throw std::invalid_argument("multipoint expects an operation and Bluetooth address (or keep on|off)");
+                const auto& target = cmd.args[1];
+                std::string normalized;
+                if (action == "source" || action == "switch" || action == "default") {
+                    normalized = protocol::multipoint::address(target);
+                    if (std::none_of(state.devices.begin(), state.devices.end(), [&](const auto& d) {
+                        return d.address == normalized && d.connected;
+                    })) throw std::invalid_argument("Playback source must be connected to the headphones");
+                }
+                if (action == "source" || action == "switch") {
+                    if (state.sourceKeeping) dev->setMultipointSourceKeeping(false);
+                    if (std::none_of(state.devices.begin(), state.devices.end(), [&](const auto& d) { return d.address == normalized && d.playing; }))
+                        dev->switchMultipointSource(target);
+                } else if (action == "default") {
+                    // Sony's UI enables source keeping first, waits for success,
+                    // then changes the selected playback source.
+                    if (!state.sourceKeeping) dev->setMultipointSourceKeeping(true);
+                    if (std::none_of(state.devices.begin(), state.devices.end(), [&](const auto& d) { return d.address == normalized && d.playing; }))
+                        dev->switchMultipointSource(target);
+                } else if (action == "keep") {
+                    if (target != "on" && target != "off") throw std::invalid_argument("keep expects on or off");
+                    dev->setMultipointSourceKeeping(target == "on");
+                } else if (action == "connect") dev->multipointConnect(target);
+                else if (action == "disconnect") dev->multipointDisconnect(target);
+                else if (action == "unpair") dev->multipointUnpair(target);
+                else throw std::invalid_argument("Unknown multipoint operation");
+            }
+            resp.data = JsonProtocol::snapshot(service).dump(-1, ' ', false, JsonProtocol::Json::error_handler_t::replace);
+            resp.success = true;
+            return resp;
+        }
+        case IpcCommandType::Info: {
+            std::ostringstream oss;
+            oss << dev->name() << "\n\n"
+                << "Protocol: " << (dev->protocolVersion() == SonyProtocolVersion::V1 ? "v1" : "v2") << "\n"
+                << "Firmware: " << (snap->firmware.empty() ? "Unknown" : snap->firmware) << "\n"
+                << "Codec: " << (snap->codec.empty() ? "Unknown" : snap->codec) << "\n";
+            if (snap->battery.main.has_value()) {
+                oss << "Battery: " << *snap->battery.main << "%\n";
+            }
+            oss << "\nNoise Control:\n  ";
+            if (snap->noiseControl.mode == protocol::NoiseControlMode::NoiseCancelling) {
+                oss << "Noise Cancelling\n";
+            } else if (snap->noiseControl.mode == protocol::NoiseControlMode::Ambient) {
+                oss << "Ambient (Level " << snap->noiseControl.ambientLevel << ")\n";
+            } else {
+                oss << "Off\n";
+            }
+
+            oss << "\nCapabilities:\n";
+            const auto& caps = dev->capabilities();
+            if (caps.noiseCancelling) oss << "  ANC\n";
+            if (caps.ambientSound) oss << "  Ambient Sound\n";
+            if (caps.equalizer) oss << (caps.tenBandEqualizer ? "  Equalizer (10-band)\n" : "  Equalizer\n");
+            if (caps.clearBass) oss << "  Clear Bass\n";
+            if (caps.dsee) oss << "  DSEE\n";
+            if (caps.speakToChat) oss << "  Speak-to-Chat\n";
+            if (caps.adaptiveVolume) oss << "  Adaptive Volume\n";
+
+            resp.success = true;
+            resp.message = dev->name();
+            resp.data = oss.str();
+            return resp;
+        }
+
+        case IpcCommandType::Battery: {
+            dev->refreshBattery();
+            snap = dev->snapshot();
+            if (!cmd.args.empty() && toLower(cmd.args[0]) == "json") {
+                resp.success = true;
+                resp.data = JsonProtocol::snapshot(service).dump(-1, ' ', false, JsonProtocol::Json::error_handler_t::replace);
+                return resp;
+            }
+            std::ostringstream oss;
+            if (snap->battery.left.has_value() && snap->battery.right.has_value()) {
+                oss << "Left: " << *snap->battery.left << "%, Right: " << *snap->battery.right << "%";
+                if (snap->battery.caseBattery.has_value()) {
+                    oss << ", Case: " << *snap->battery.caseBattery << "%";
+                }
+            } else if (snap->battery.main.has_value()) {
+                oss << "Battery: " << *snap->battery.main << "%";
+            } else {
+                oss << "Battery: Unknown";
+            }
+            if (snap->battery.charging) {
+                oss << " (Charging)";
+            }
+            resp.success = true;
+            resp.message = "Battery status";
+            resp.data = oss.str();
+            return resp;
+        }
+
+        case IpcCommandType::Anc: {
+            bool on = true;
+            if (!cmd.args.empty() && toLower(cmd.args[0]) == "off") {
+                on = false;
+            }
+            dev->setAnc(on);
+            resp.success = true;
+            resp.message = on ? "ANC enabled" : "ANC disabled";
+            return resp;
+        }
+
+        case IpcCommandType::Ambient: {
+            if (!cmd.args.empty() && toLower(cmd.args[0]) == "off") {
+                dev->setAnc(false);
+                resp.success = true;
+                resp.message = "Ambient sound disabled";
+                return resp;
+            }
+            int level = 10;
+            if (!cmd.args.empty()) {
+                try {
+                    level = std::clamp(std::stoi(cmd.args[0]), 1, 20);
+                } catch (...) {
+                    level = 10;
+                }
+            }
+            dev->setAmbient(level, false);
+            resp.success = true;
+            resp.message = "Ambient sound set to level " + std::to_string(level);
+            return resp;
+        }
+
+        case IpcCommandType::EqGet: {
+            std::ostringstream oss;
+            oss << "Preset: " << presetToString(snap->equalizer.preset) << "\n";
+            if (!dev->capabilities().tenBandEqualizer) {
+                oss << "Clear Bass: " << snap->equalizer.clearBass << "\n";
+            }
+            oss << "Bands: [";
+            for (size_t i = 0; i < snap->equalizer.bands.size(); ++i) {
+                oss << snap->equalizer.bands[i];
+                if (i + 1 < snap->equalizer.bands.size()) oss << ", ";
+            }
+            oss << "]";
+            resp.success = true;
+            resp.message = "Equalizer state";
+            resp.data = oss.str();
+            return resp;
+        }
+
+        case IpcCommandType::EqPreset: {
+            std::string presetName = cmd.args.empty() ? "off" : cmd.args[0];
+            if (presetName == "preset" && cmd.args.size() > 1) {
+                presetName = cmd.args[1];
+            }
+            int preset = parsePresetName(presetName);
+            if (preset < 0 || preset > 255) {
+                resp.success = false;
+                resp.message = "Unknown preset: " + presetName;
+                return resp;
+            }
+            dev->setEqualizerPreset(preset);
+            resp.success = true;
+            resp.message = "Equalizer set to preset " + presetToString(preset);
+            return resp;
+        }
+
+        case IpcCommandType::EqCustom: {
+            size_t startIdx = (!cmd.args.empty() && toLower(cmd.args[0]) == "custom") ? 1 : 0;
+
+            if (dev->capabilities().tenBandEqualizer) {
+                // 10-band devices (e.g. WH-1000XM6) have no separate Clear
+                // Bass slot: args are the 10 raw band values directly,
+                // "eq custom <b1> ... <b10>". Sound Connect's dB mapping for
+                // this scale hasn't been reverse-engineered, so all 10 must
+                // be given explicitly rather than defaulting unset ones to
+                // an unverified "flat" value -- see issue #10.
+                if (cmd.args.size() < startIdx + 10) {
+                    resp.success = false;
+                    resp.message = "This device has a 10-band equalizer with no Clear Bass "
+                                    "control: eq custom <b1> ... <b10> (raw 0-12 each)";
+                    return resp;
+                }
+                std::vector<int> bands(10, 0);
+                for (size_t i = 0; i < 10; ++i) {
+                    try {
+                        bands[i] = std::clamp(std::stoi(cmd.args[startIdx + i]), 0, 12);
+                    } catch (...) {}
+                }
+                dev->setEqualizerCustom(0, bands);
+            } else {
+                // args: [custom, clearBass, b1, b2, b3, b4, b5] or [clearBass, b1..b5]
+                int clearBass = 0;
+                std::vector<int> bands(5, 0);
+                if (cmd.args.size() > startIdx) {
+                    try {
+                        clearBass = std::clamp(std::stoi(cmd.args[startIdx]), -10, 10);
+                    } catch (...) {}
+                }
+                for (size_t i = 0; i < 5 && startIdx + 1 + i < cmd.args.size(); ++i) {
+                    try {
+                        bands[i] = std::clamp(std::stoi(cmd.args[startIdx + 1 + i]), -10, 10);
+                    } catch (...) {}
+                }
+                dev->setEqualizerCustom(clearBass, bands);
+            }
+            resp.success = true;
+            resp.message = "Custom EQ applied";
+            return resp;
+        }
+
+        case IpcCommandType::Dsee: {
+            bool on = true;
+            if (!cmd.args.empty()) {
+                auto arg = toLower(cmd.args[0]);
+                if (arg == "off") on = false;
+            }
+            dev->setDsee(on);
+            resp.success = true;
+            resp.message = on ? "DSEE enabled" : "DSEE disabled";
+            return resp;
+        }
+
+        case IpcCommandType::AutoPowerOff: {
+            int idx = 0;
+            if (!cmd.args.empty()) {
+                try {
+                    idx = std::clamp(std::stoi(cmd.args[0]), 0, 5);
+                } catch (...) {}
+            }
+            dev->setAutoPowerOff(idx);
+            resp.success = true;
+            resp.message = "Auto power off set to index " + std::to_string(idx);
+            return resp;
+        }
+
+        case IpcCommandType::PowerOff: {
+            dev->powerOff();
+            resp.success = true;
+            resp.message = "Headphones powered off";
+            return resp;
+        }
+
+        case IpcCommandType::Status: {
+            resp.success = true;
+            resp.message = "Connected";
+            resp.data = "model=" + dev->name();
+            return resp;
+        }
+
+        default:
+            resp.success = false;
+            resp.message = "Unknown command: " + cmd.raw;
+            return resp;
+        }
+    } catch (const std::exception& ex) {
+        resp.success = false;
+        resp.message = "Command failed: " + std::string(ex.what());
+        return resp;
+    }
+}
+
+} // namespace sony::core

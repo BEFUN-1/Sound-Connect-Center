@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>SonyDeviceCenter</AssemblyName>
+    <RootNamespace>SonyDeviceCenter</RootNamespace>
+    <SonyCtlPath Condition="'$(SonyCtlPath)' == ''">$(MSBuildThisFileDirectory)..\build-win-verified\apps\sonyctl\sonyctl.exe</SonyCtlPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="Run-SonyDeviceCenter.ps1" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="README.md" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\Client\resources\devices\wh-1000xm6.png" Link="Assets\wh-1000xm6.png" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <Target Name="CopySonyCtl" AfterTargets="Build">
+    <Copy SourceFiles="$(SonyCtlPath)"
+          DestinationFolder="$(TargetDir)"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(SonyCtlPath)')" />
+  </Target>
+</Project>
