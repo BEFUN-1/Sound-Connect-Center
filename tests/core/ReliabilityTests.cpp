@@ -41,6 +41,17 @@ TEST_CASE("Lifecycle retries with backoff and rediscovers without a restart", "[
         if (!frame.payload.empty()) CHECK(frame.payload[0] != 0x22);
     }
 }
+
+TEST_CASE("V2 initialization timeout is reported as a failed connection", "[core][recovery]") {
+    auto transport = std::make_shared<FakeTransport>();
+    SonyDevice device(transport);
+
+    CHECK_THROWS_AS(
+        device.connect(DeviceAddress("11:22:33:44:55:66"), "WH-1000XM5", InitialRefresh::None),
+        SonyException);
+    CHECK_FALSE(device.isConnected());
+}
+
 TEST_CASE("Lifecycle prefers connected candidates and honors explicit selection", "[core][recovery]") {
     auto transport = std::make_shared<ReplyTransport>();
     auto discovery = std::make_shared<FakeDeviceDiscovery>();

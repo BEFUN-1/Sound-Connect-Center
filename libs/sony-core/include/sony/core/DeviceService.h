@@ -45,7 +45,7 @@ private:
     bool _wasConnected{false};
     unsigned _retrySeconds{1};
     Clock::time_point _nextAttempt{}, _nextSettings{}, _nextBattery{};
-    std::string _target, _selected, _connectionState{"disconnected"}, _lastError;
+    std::string _target, _targetName, _selected, _connectionState{"disconnected"}, _lastError;
     void _connect(const transport::DeviceAddress& address, std::string_view name);
 
 };

@@ -37,7 +37,13 @@ public:
                     // Auto-respond to known inquiry requests
                     if (!frame.payload.empty()) {
                         uint8_t op = frame.payload[0];
-                        if (op == 0x22) { // Battery query
+                        if (frame.payload == std::vector<uint8_t>{0x00, 0x00}) {
+                            queueIncoming(FrameCodec::encode(SonyFrame{
+                                .type = DataType::DataMdr,
+                                .sequence = 1,
+                                .payload = {0x01, 0, 0, 0, 0, 0, 1, 1}
+                            }));
+                        } else if (op == 0x22) { // Battery query
                             queueIncoming(FrameCodec::encode(SonyFrame{
                                 .type = DataType::DataMdr,
                                 .sequence = 1,

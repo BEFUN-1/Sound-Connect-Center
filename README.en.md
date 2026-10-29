@@ -14,6 +14,8 @@ The project is still under development. Results may vary by model, firmware, and
 
 ## Current status
 
+The current release is **1.3**. The Windows build includes the control-channel recovery fix for switching back to the computer after a phone call on a multipoint headset. See [`docs/release-v1.3.md`](docs/release-v1.3.md) for the release validation record.
+
 Current work mainly covers:
 
 - Frame parsing and validation for Sony headphone Bluetooth communication
@@ -145,6 +147,7 @@ A passing test only describes the tested scenario. It is not proof of real-devic
 - `docs/ipc-and-lifecycle.md`: background service and client communication
 - `docs/reverse-engineering/`: protocol analysis notes
 - `docs/windows-xm6-validation-2026-10-19.md`: Windows hardware validation record
+- `docs/release-v1.3.md`: 1.3 release notes and phone-call handoff validation
 
 Issues and test reports are welcome. When reporting a device problem, include the model, firmware version, operating system, Bluetooth adapter, command used, and the complete error message when possible.
 

@@ -289,6 +289,30 @@ TEST_CASE("SonyProtocolSession: timeouts on missing ACK or missing response", "[
     }
 }
 
+TEST_CASE("SonyProtocolSession: persistent request timeouts invalidate a half-open control link", "[protocol][session][recovery]")
+{
+    FakeTransport fake;
+    SonyProtocolSession session(&fake);
+    session.connect("11:22:33:44:55:66");
+    fake.simulateTimeoutOnReceive(true, 0);
+
+    auto timeoutRequest = [&] {
+        try {
+            session.sendAndAwaitResponse(
+                makeDataFrame(0, {0x02, 0x01}), 0x02, -1, std::chrono::milliseconds(40));
+        } catch (const SonyException& ex) {
+            REQUIRE(ex.code() == SonyErrorCode::Timeout);
+            return;
+        }
+        FAIL("Expected Timeout exception");
+    };
+
+    timeoutRequest();
+    REQUIRE(session.isConnected());
+    timeoutRequest();
+    REQUIRE_FALSE(session.isConnected());
+}
+
 TEST_CASE("SonyProtocolSession: disconnect during pending request throws Disconnected", "[protocol][session]")
 {
     FakeTransport fake;

@@ -41,6 +41,18 @@ public:
                 if (frame.type == DataType::DataMdr && !frame.payload.empty()) {
                     opcodes.push_back(frame.payload[0]);
                 }
+                if (frame.type == DataType::DataMdr &&
+                    frame.payload == std::vector<uint8_t>{0x00, 0x00}) {
+                    queueIncoming(FrameCodec::encode(SonyFrame{
+                        .type = DataType::Ack,
+                        .sequence = frame.sequence,
+                    }));
+                    queueIncoming(FrameCodec::encode(SonyFrame{
+                        .type = DataType::DataMdr,
+                        .sequence = 1,
+                        .payload = {0x01, 0, 0, 0, 0, 0, 1, 1},
+                    }));
+                }
             } catch (...) {
                 // Partial or malformed frames are not interesting here.
             }
@@ -64,7 +76,8 @@ std::shared_ptr<OpcodeRecordingTransport> makeTransport() {
 TEST_CASE("Connecting a V1 device by name never sends the power-off opcode",
           "[core][protocol][v1][regression]") {
     auto transport = makeTransport();
-    DeviceService service(transport, nullptr);
+    DeviceService service(transport, nullptr, [] { return DeviceService::Clock::now(); },
+                          InitialRefresh::None, false);
 
     service.connect(DeviceAddress("11:22:33:44:55:66"), "WH-1000XM3");
 
@@ -79,7 +92,8 @@ TEST_CASE("Connecting without a device name never sends the power-off opcode",
     // the V2 command set and switched legacy headphones off on connect. With no
     // name the profile must fall back to V1, not to V2.
     auto transport = makeTransport();
-    DeviceService service(transport, nullptr);
+    DeviceService service(transport, nullptr, [] { return DeviceService::Clock::now(); },
+                          InitialRefresh::None, false);
 
     service.connect(DeviceAddress("11:22:33:44:55:66"));
 
@@ -91,7 +105,8 @@ TEST_CASE("Connecting without a device name never sends the power-off opcode",
 TEST_CASE("An unrecognised device name is treated as V1",
           "[core][protocol][v1][regression]") {
     auto transport = makeTransport();
-    DeviceService service(transport, nullptr);
+    DeviceService service(transport, nullptr, [] { return DeviceService::Clock::now(); },
+                          InitialRefresh::None, false);
 
     service.connect(DeviceAddress("11:22:33:44:55:66"), "Some Unknown Headset");
 
@@ -105,7 +120,8 @@ TEST_CASE("A V2 generation does not carry over to a later V1 connection",
     // The device object is reused across connects. Resolving the generation only
     // when a name was supplied left the previous device's V2 version in place.
     auto transport = makeTransport();
-    DeviceService service(transport, nullptr);
+    DeviceService service(transport, nullptr, [] { return DeviceService::Clock::now(); },
+                          InitialRefresh::None, false);
 
     service.connect(DeviceAddress("11:22:33:44:55:66"), "WH-1000XM5");
     REQUIRE(service.activeDevice()->protocolVersion() == SonyProtocolVersion::V2);
@@ -121,7 +137,8 @@ TEST_CASE("A known V2 device still selects the V2 command set",
           "[core][protocol][v2]") {
     // The safe default must not silently downgrade devices that do support V2.
     auto transport = makeTransport();
-    DeviceService service(transport, nullptr);
+    DeviceService service(transport, nullptr, [] { return DeviceService::Clock::now(); },
+                          InitialRefresh::None, false);
 
     service.connect(DeviceAddress("11:22:33:44:55:66"), "WH-1000XM5");
 

@@ -71,6 +71,8 @@ void SonyDevice::connect(const transport::DeviceAddress& address, std::string_vi
             _protocol->initDevice();
         } catch (const SonyException& ex) {
             Logger::warn(LogCategory::Device, "Device init handshake failed: " + std::string(ex.what()));
+            disconnect();
+            throw;
         }
     }
 

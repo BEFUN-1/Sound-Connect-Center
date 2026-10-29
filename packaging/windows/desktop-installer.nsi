@@ -48,7 +48,7 @@ Section "Sony Device Center" Main
     CreateShortCut "$DESKTOP\Sony Device Center.lnk" "$INSTDIR\SonyDeviceCenter.exe" "" "$INSTDIR\SonyDeviceCenter.exe"
     WriteRegStr HKCU "Software\SonyDeviceCenter" "InstallDir" "$INSTDIR"
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\SonyDeviceCenter" "DisplayName" "Sony Device Center"
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\SonyDeviceCenter" "DisplayVersion" "0.1.5"
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\SonyDeviceCenter" "DisplayVersion" "1.3"
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\SonyDeviceCenter" "InstallLocation" "$INSTDIR"
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\SonyDeviceCenter" "DisplayIcon" "$INSTDIR\SonyDeviceCenter.exe"
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\SonyDeviceCenter" "UninstallString" '$\"$INSTDIR\Uninstall.exe$\"'

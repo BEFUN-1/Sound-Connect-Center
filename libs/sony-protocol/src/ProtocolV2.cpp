@@ -41,23 +41,26 @@ ProtocolV2::ProtocolV2(SonyProtocolSession& session, bool tenBandEqualizer)
 
 void ProtocolV2::initDevice() {
     // V2 handshake init: 0x00 0x00 -> RET 0x01
-    try {
-        const auto response = _session.sendAndAwaitResponse(
-            SonyFrame{ .type = DataType::DataMdr, .payload = {0x00, 0x00} },
-            0x01,
-            -1,
-            std::chrono::milliseconds(1000)
-        );
-        if (response.payload.size() == 8 && response.payload[7] <= 1)
-            _table2Supported = response.payload[7] == 0;
-        if (response.payload.size() == 8 && response.payload[6] == 0) {
+    const auto response = _session.sendAndAwaitResponse(
+        SonyFrame{ .type = DataType::DataMdr, .payload = {0x00, 0x00} },
+        0x01,
+        -1,
+        std::chrono::milliseconds(1000)
+    );
+    if (response.payload.size() == 8 && response.payload[7] <= 1)
+        _table2Supported = response.payload[7] == 0;
+    if (response.payload.size() == 8 && response.payload[6] == 0) {
+        try {
             const auto functions = _session.sendAndAwaitResponse(
                 SonyFrame{.type=DataType::DataMdr, .payload={0x06,0}}, 0x07, 0,
                 std::chrono::milliseconds(1200), [](const SonyFrame&) { return true; });
             const auto supported = multipoint::functions(functions.payload);
             if (supported.count(0x6D)) _noiseType = 0x19;
+        } catch (const SonyException&) {
+            // Capability discovery is optional; a completed init response
+            // still proves that the control channel is usable.
         }
-    } catch (const SonyException&) {}
+    }
 }
 
 BatteryState ProtocolV2::getBattery() {

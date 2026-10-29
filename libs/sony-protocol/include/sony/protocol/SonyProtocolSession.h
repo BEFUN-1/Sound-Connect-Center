@@ -59,6 +59,8 @@ public:
     [[nodiscard]] transport::ITransport* transport() const noexcept;
 
 private:
+    static constexpr unsigned kRequestTimeoutThreshold = 2;
+
     void _startReader();
     void _stopReader() noexcept;
     void _readerLoop();
@@ -67,11 +69,14 @@ private:
     void _handleDecodedFrame(const SonyFrame& frame);
     void _sendAck(uint8_t seqNumber);
     void _writeFrame(const SonyFrame& frame);
+    void _recordRequestTimeout(unsigned threshold) noexcept;
 
     std::unique_ptr<transport::ITransport> _ownedTransport;
     transport::ITransport* _transport{nullptr};
 
     std::atomic<bool> _running{false};
+    std::atomic<bool> _healthy{false};
+    std::atomic<unsigned> _consecutiveRequestTimeouts{0};
     std::thread _readerThread;
 
     mutable std::mutex _sendMtx;

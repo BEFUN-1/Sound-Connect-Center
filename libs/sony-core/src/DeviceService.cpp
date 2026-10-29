@@ -44,7 +44,14 @@ std::vector<DiscoveredDevice> DeviceService::discoverDevices() {
 
 void DeviceService::connect(const transport::DeviceAddress& address, std::string_view name) {
     std::lock_guard lock(_mutex);
-    _target = address.str(); _automatic = true; _retrySeconds = 1;
+    const auto addressString = address.str();
+    if (_target != addressString) {
+        _targetName.clear();
+    }
+    _target = addressString; _automatic = true; _retrySeconds = 1;
+    if (!name.empty()) {
+        _targetName = std::string(name);
+    }
     try { _connect(address, name); }
     catch (const std::exception& ex) {
         _wasConnected = false;
@@ -56,18 +63,22 @@ void DeviceService::connect(const transport::DeviceAddress& address, std::string
 
 void DeviceService::_connect(const transport::DeviceAddress& address, std::string_view name) {
     _selected = address.str(); _connectionState = "connecting";
+    const auto effectiveName = name.empty() ? std::string_view(_targetName) : name;
     if (!_device) {
         // The version passed here is provisional; SonyDevice::connect() resolves
         // it from the device profile. Start from V1 so that a failure to resolve
         // can never leave a legacy device on the V2 command set.
         _device = std::make_unique<SonyDevice>(_transport, SonyProtocolVersion::V1);
     }
-    _device->connect(address, name, _initialRefresh);
+    _device->connect(address, effectiveName, _initialRefresh);
     if (!_device->isConnected()) throw SonyException(SonyErrorCode::Disconnected, "Bluetooth link closed during initialization");
     _wasConnected = true; _connectionState = "connected"; _lastError.clear(); _retrySeconds = 1;
     _nextSettings = _now() + std::chrono::seconds(5);
     _nextBattery = _now() + std::chrono::seconds(30);
-    Logger::info(LogCategory::Device, "Connected to " + std::string(name));
+    if (!effectiveName.empty()) {
+        _targetName = std::string(effectiveName);
+    }
+    Logger::info(LogCategory::Device, "Connected to " + std::string(effectiveName));
 }
 
 void DeviceService::disconnect() noexcept {
@@ -98,6 +109,9 @@ protocol::DeviceStateSnapshot DeviceService::snapshot() const {
 
 void DeviceService::startAutoConnect(std::string address) {
     std::lock_guard lock(_mutex);
+    if (_target != address) {
+        _targetName.clear();
+    }
     _target = std::move(address); _automatic = true; _retrySeconds = 1;
     _nextAttempt = _now(); _connectionState = "searching";
 }

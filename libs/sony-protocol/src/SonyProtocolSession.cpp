@@ -16,7 +16,7 @@ SonyProtocolSession::~SonyProtocolSession() {
 }
 
 void SonyProtocolSession::connect(const transport::DeviceAddress& address) {
-    if (isConnected() || _running.load()) {
+    if ((_transport && _transport->isConnected()) || _running.load()) {
         disconnect();
     }
     if (!_transport) {
@@ -43,6 +43,8 @@ void SonyProtocolSession::start() {
         _hasAck = false;
         _pendingRequest.reset();
     }
+    _healthy.store(true);
+    _consecutiveRequestTimeouts.store(0);
     _startReader();
 }
 
@@ -65,10 +67,12 @@ void SonyProtocolSession::disconnect() noexcept {
         _ackCv.notify_all();
         _responseCv.notify_all();
     }
+    _healthy.store(false);
+    _consecutiveRequestTimeouts.store(0);
 }
 
 bool SonyProtocolSession::isConnected() const noexcept {
-    return _running.load() && _transport && _transport->isConnected();
+    return _healthy.load() && _running.load() && _transport && _transport->isConnected();
 }
 
 transport::ITransport* SonyProtocolSession::transport() const noexcept {
@@ -198,6 +202,10 @@ void SonyProtocolSession::_parseStream(std::vector<SonyFrame>& outFrames) {
 }
 
 void SonyProtocolSession::_handleDecodedFrame(const SonyFrame& frame) {
+    if (_healthy.load()) {
+        _consecutiveRequestTimeouts.store(0);
+    }
+
     if (frame.type == DataType::Ack) {
         Logger::debug(LogCategory::Session, "RX  ACK seq=" + std::to_string(frame.sequence));
         std::lock_guard lock(_sessionMtx);
@@ -288,6 +296,23 @@ void SonyProtocolSession::_handleDecodedFrame(const SonyFrame& frame) {
     }
 }
 
+void SonyProtocolSession::_recordRequestTimeout(unsigned threshold) noexcept {
+    const auto count = _consecutiveRequestTimeouts.fetch_add(1) + 1;
+    if (count < threshold) {
+        return;
+    }
+
+    _healthy.store(false);
+    _running.store(false);
+    if (_transport) {
+        _transport->cancelPendingIo();
+    }
+    _ackCv.notify_all();
+    _responseCv.notify_all();
+    Logger::warn(LogCategory::Session,
+        "Control link marked unhealthy after " + std::to_string(count) + " request timeout(s)");
+}
+
 void SonyProtocolSession::_sendAck(uint8_t seqNumber) {
     Logger::debug(LogCategory::Session, "TX  ACK seq=" + std::to_string(seqNumber));
     SonyFrame ackFrame{
@@ -341,7 +366,14 @@ void SonyProtocolSession::send(const SonyFrame& frame, std::chrono::milliseconds
         _hasAck = false;
     }
 
-    _writeFrame(toSend);
+    try {
+        _writeFrame(toSend);
+    } catch (const SonyException& ex) {
+        if (ex.code() == SonyErrorCode::Timeout) {
+            _recordRequestTimeout(1);
+        }
+        throw;
+    }
 
     auto deadline = std::chrono::steady_clock::now() + timeout;
     std::unique_lock lock(_sessionMtx);
@@ -353,6 +385,8 @@ void SonyProtocolSession::send(const SonyFrame& frame, std::chrono::milliseconds
         throw SonyException(SonyErrorCode::Disconnected, "Transport disconnected while waiting for ACK");
     }
     if (!received || !_hasAck) {
+        lock.unlock();
+        _recordRequestTimeout(1);
         throw SonyException(SonyErrorCode::Timeout, "Timeout waiting for ACK");
     }
     _hasAck = false;
@@ -404,7 +438,14 @@ SonyFrame SonyProtocolSession::sendAndAwaitResponse(
         }
     }
 
-    _writeFrame(toSend);
+    try {
+        _writeFrame(toSend);
+    } catch (const SonyException& ex) {
+        if (ex.code() == SonyErrorCode::Timeout) {
+            _recordRequestTimeout(kRequestTimeoutThreshold);
+        }
+        throw;
+    }
 
     auto deadline = std::chrono::steady_clock::now() + timeout;
     std::unique_lock lock(_sessionMtx);
@@ -427,6 +468,8 @@ SonyFrame SonyProtocolSession::sendAndAwaitResponse(
     }
     if (!received || !_pendingRequest || !_pendingRequest->hasResponse) {
         _pendingRequest.reset();
+        lock.unlock();
+        _recordRequestTimeout(kRequestTimeoutThreshold);
         throw SonyException(SonyErrorCode::Timeout, "Timeout waiting for response from device");
     }
 

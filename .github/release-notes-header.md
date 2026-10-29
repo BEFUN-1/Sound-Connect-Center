@@ -20,8 +20,10 @@ sudo dnf install ./sony-device-center-*-Linux.rpm
 sudo apt install ./sony-device-center-*-Linux.deb
 ```
 
-Windows: run the `.msi`, or unpack the `.zip`. The Windows packages bundle the Qt
-and MSVC runtimes; the Linux packages depend on system Qt 6.
+Windows: run `SonyDeviceCenter-Setup.exe`, or use `SonyDeviceCenter.exe` from
+the portable package. The Windows desktop package bundles the .NET 8 Desktop
+Runtime and the native backend; the Qt packages bundle the Qt and MSVC runtimes.
+The Linux packages depend on system Qt 6.
 
 macOS (13+, Apple silicon and Intel): open the `.dmg` and drag **Sony Device
 Center** to Applications. `sonyd` and `sonyctl` live inside the bundle at

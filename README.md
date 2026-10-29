@@ -16,6 +16,8 @@
 
 ## 当前状态
 
+当前发布版本为 **1.3**。Windows 版本包含蓝牙音频在手机通话后切回电脑时的控制通道恢复修复，发布验证记录见 [`docs/release-v1.3.md`](docs/release-v1.3.md)。
+
 目前主要工作集中在以下内容：
 
 - 索尼耳机蓝牙通信的帧解析和校验
@@ -147,6 +149,7 @@ ctest --test-dir build --output-on-failure
 - `docs/ipc-and-lifecycle.md`：后台服务和客户端通信说明
 - `docs/reverse-engineering/`：协议分析记录
 - `docs/windows-xm6-validation-2026-10-19.md`：Windows 实机验证记录
+- `docs/release-v1.3.md`：1.3 版本发布说明与电话切换故障验证记录
 
 欢迎提交问题和测试记录。报告设备问题时，请尽量附上型号、固件版本、操作系统、蓝牙适配器、使用的命令以及完整错误信息。
 

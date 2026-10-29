@@ -7,7 +7,7 @@ if(APPLE AND NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "Minimum macOS version")
 endif()
 
-project(SonyDeviceCenter VERSION 1.2 LANGUAGES CXX)
+project(SonyDeviceCenter VERSION 1.3 LANGUAGES CXX)
 
 # Keep the compatibility include directory first for the older MinGW toolchain
 # commonly available on Windows. Newer libstdc++ versions simply ignore these

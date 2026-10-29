@@ -2,7 +2,9 @@
 
 Recorded after implementing IPC hardening, connection recovery, and the Qt worker
 and structured-state interface. These items are intentionally left for follow-up;
-no hardware verification or release publication is implied by the automated tests.
+the 1.3 release includes automated validation for the Windows control-session
+recovery fix, while hardware coverage remains limited to the records referenced
+below.
 
 ## Highest priority
 
@@ -100,8 +102,9 @@ no hardware verification or release publication is implied by the automated test
 - Core JSON uses a vendored, pinned nlohmann/json v3.12.0 header. Document/update its
   provenance when upgrading and add an installation/export rule if SDK distribution
   is introduced. No new package-manager dependency is required for current builds.
-- Split the implementation into reviewable commits/PRs before merging. The changes
-  are currently local workspace edits; no PRs or releases were published.
+- Keep the 1.3 fix and its validation record in a reviewable commit. The code and
+  release artifacts are published from the `v1.3` tag; future changes should keep
+  release notes and hashes next to the corresponding validation record.
 - Release signing/attestation (#7; the macOS DMG has the hooks, see packaging/README.md), Main.qml extraction
   (#21), AUR packaging (#22), and cosmetic work remain deferred.
 

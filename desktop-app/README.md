@@ -1,5 +1,7 @@
 # Sony Device Center Desktop
 
+Release 1.3
+
 This Windows Forms client controls paired Sony headphones through the bundled
 `sonyctl.exe` backend. It is intended for the WH-1000XM6 and provides:
 
@@ -31,6 +33,11 @@ To rebuild in this workspace:
 .\desktop-app\build-desktop.ps1
 .\desktop-app\package-installer.ps1
 ```
+
+The 1.3 release includes recovery for a stale RFCOMM control session after
+audio ownership returns from a phone call. A timed-out command now invalidates
+the session and the next operation reconnects and completes the protocol
+handshake before sending another control command.
 
 The UI invokes `sonyctl.exe --direct`, so it does not require a separate daemon.
 Bluetooth pairing and exclusive access are still managed by Windows and the

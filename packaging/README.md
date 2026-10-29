@@ -64,6 +64,19 @@ cpack --config build/CPackConfig.cmake -G ZIP -C Release
 cpack --config build/CPackConfig.cmake -G NSIS -C Release
 ```
 
+The Windows Forms desktop release uses the scripts in `desktop-app/` and bundles
+the .NET 8 Desktop Runtime with the native `sonyctl` backend:
+
+```powershell
+.\desktop-app\build-desktop.ps1
+.\desktop-app\package-installer.ps1 `
+  -MakeNsis 'C:\path\to\nsis\makensis.exe'
+```
+
+This produces `SonyDeviceCenter-Setup.exe` and
+`SonyDeviceCenter-Windows-x64.zip` at the repository root. The files are
+release artifacts and remain excluded from Git.
+
 ---
 
 ## 3. macOS Packaging
