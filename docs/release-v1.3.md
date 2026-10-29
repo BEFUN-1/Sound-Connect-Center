@@ -38,12 +38,10 @@ Windows 桌面构建和 `sonyctl --help` 检查也全部通过。
 
 | 文件 | SHA-256 |
 | --- | --- |
-| `SonyDeviceCenter.exe` | `2D30C651576CF14642B51045EE7BF2492DA8FE4034EC78035AD31A3520D33543` |
 | `SonyDeviceCenter-Setup.exe` | `ABCAD7CC438CBE73A913EAA6B89765830FAAF58A19A6ED1F2EC9D05B19B835BF` |
-| `SonyDeviceCenter-Windows-x64.zip` | `9F30158C9CA0FDC3F4FF25AA0EAF73646B085E2A23D82D3A49A9FCA6835D16F1` |
 
-安装器和便携 ZIP 均由修复后的 Windows Release payload 生成。发布页中的
-`SonyDeviceCenter.exe` 是同一 payload 的直接启动器，适合不需要安装的用户。
+GitHub Release `v1.3` 当前只附带 NSIS 安装器。便携版启动器和 ZIP
+仍可由 Windows Release payload 生成，但不作为本次 Release 的下载资产。
 
 ## English
 
