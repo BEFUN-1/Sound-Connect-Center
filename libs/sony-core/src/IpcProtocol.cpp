@@ -176,6 +176,7 @@ IpcResponse IpcProtocol::execute(const IpcCommand& cmd, IDeviceService& service)
     auto snap = dev->snapshot();
 
     try {
+        service.validateSelectedTarget();
         switch (cmd.type) {
         case IpcCommandType::Dashboard: {
             dev->refreshMultipoint();
@@ -409,12 +410,12 @@ IpcResponse IpcProtocol::execute(const IpcCommand& cmd, IDeviceService& service)
         }
 
         case IpcCommandType::AutoPowerOff: {
-            int idx = 0;
-            if (!cmd.args.empty()) {
-                try {
-                    idx = std::clamp(std::stoi(cmd.args[0]), 0, 5);
-                } catch (...) {}
-            }
+            if (cmd.args.size() != 1)
+                throw std::invalid_argument("Auto power off expects an index from 0 to 6");
+            size_t parsed = 0;
+            const int idx = std::stoi(cmd.args[0], &parsed);
+            if (parsed != cmd.args[0].size() || idx < 0 || idx > 6)
+                throw std::invalid_argument("Auto power off expects an index from 0 to 6");
             dev->setAutoPowerOff(idx);
             resp.success = true;
             resp.message = "Auto power off set to index " + std::to_string(idx);
@@ -422,7 +423,7 @@ IpcResponse IpcProtocol::execute(const IpcCommand& cmd, IDeviceService& service)
         }
 
         case IpcCommandType::PowerOff: {
-            dev->powerOff();
+            service.powerOff();
             resp.success = true;
             resp.message = "Headphones powered off";
             return resp;

@@ -45,18 +45,41 @@ TEST_CASE("CapabilityDiscovery: unknown device probes and populates cache", "[pr
     auto cache = std::make_shared<CapabilityCache>();
     CapabilityDiscovery discovery(cache);
 
-    // Fake an unknown device: queue responses for FW, battery, and DSEE
-    // 1. FW
+    // Fake an unknown device: probeDevice checks every optional feature in
+    // order, so provide a complete response script instead of letting the
+    // unmentioned requests consume the later DSEE fixture.
+    // 1. Firmware
     fake.queueIncoming(FrameCodec::encode(SonyFrame{ .type = DataType::Ack, .sequence = 0 }));
     fake.queueIncoming(FrameCodec::encode(SonyFrame{ .type = DataType::DataMdr, .sequence = 1, .payload = {0x05, 0x02, 0x00, '1', '.', '0'} }));
-    // 2. Battery
+    // 2. Codec
     fake.queueIncoming(FrameCodec::encode(SonyFrame{ .type = DataType::Ack, .sequence = 1 }));
-    fake.queueIncoming(FrameCodec::encode(SonyFrame{ .type = DataType::DataMdr, .sequence = 0, .payload = {0x23, 0x00, 90, 0} }));
-    // 3. Noise Control (timeout or fails)
-    // 4. Equalizer (timeout)
-    // 5. DSEE
+    fake.queueIncoming(FrameCodec::encode(SonyFrame{ .type = DataType::DataMdr, .sequence = 0, .payload = {0x13, 0x02, 0x10} }));
+    // 3. Battery
     fake.queueIncoming(FrameCodec::encode(SonyFrame{ .type = DataType::Ack, .sequence = 2 }));
-    fake.queueIncoming(FrameCodec::encode(SonyFrame{ .type = DataType::DataMdr, .sequence = 1, .payload = {0xe7, 0x01, 0x01} }));
+    fake.queueIncoming(FrameCodec::encode(SonyFrame{ .type = DataType::DataMdr, .sequence = 1, .payload = {0x23, 0x00, 90, 0} }));
+    // 4. Noise Control
+    fake.queueIncoming(FrameCodec::encode(SonyFrame{ .type = DataType::Ack, .sequence = 3 }));
+    fake.queueIncoming(FrameCodec::encode(SonyFrame{ .type = DataType::DataMdr, .sequence = 0,
+        .payload = {0x67, 0x17, 0x01, 1, 1, 0, 12} }));
+    // 5. Equalizer
+    fake.queueIncoming(FrameCodec::encode(SonyFrame{ .type = DataType::Ack, .sequence = 4 }));
+    fake.queueIncoming(FrameCodec::encode(SonyFrame{ .type = DataType::DataMdr, .sequence = 1,
+        .payload = {0x57, 0x00, 0x16, 0x06, 13, 10, 11, 12, 13, 14} }));
+    // 6. DSEE
+    fake.queueIncoming(FrameCodec::encode(SonyFrame{ .type = DataType::Ack, .sequence = 5 }));
+    fake.queueIncoming(FrameCodec::encode(SonyFrame{ .type = DataType::DataMdr, .sequence = 0, .payload = {0xe7, 0x01, 0x01} }));
+    // 7. Speak-to-Chat
+    fake.queueIncoming(FrameCodec::encode(SonyFrame{ .type = DataType::Ack, .sequence = 6 }));
+    fake.queueIncoming(FrameCodec::encode(SonyFrame{ .type = DataType::DataMdr, .sequence = 1,
+        .payload = {0xf7, 0x0c, 0x00} }));
+    // 8. Adaptive volume
+    fake.queueIncoming(FrameCodec::encode(SonyFrame{ .type = DataType::Ack, .sequence = 7 }));
+    fake.queueIncoming(FrameCodec::encode(SonyFrame{ .type = DataType::DataMdr, .sequence = 0,
+        .payload = {0xf7, 0x0a, 0x00} }));
+    // 9. Auto power-off
+    fake.queueIncoming(FrameCodec::encode(SonyFrame{ .type = DataType::Ack, .sequence = 8 }));
+    fake.queueIncoming(FrameCodec::encode(SonyFrame{ .type = DataType::DataMdr, .sequence = 1,
+        .payload = {0x27, 0x05, 0x00, 0x00} }));
 
     auto caps = discovery.probeDevice(proto, SonyModel::Unknown, "AA:BB:CC:DD:EE:FF");
     REQUIRE(caps.firmwareInfo == true);

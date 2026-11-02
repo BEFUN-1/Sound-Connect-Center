@@ -17,6 +17,9 @@ target_compile_features(sony-transport PUBLIC cxx_std_20)
 target_include_directories(sony-transport
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        # ITransport exposes the negotiated protocol generation in its public
+        # API, so consumers also need the protocol headers at compile time.
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../sony-protocol/include>
         $<INSTALL_INTERFACE:include>
     PRIVATE
         "${SOUNDCONNECT_CLIENT_DIR}"

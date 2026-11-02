@@ -26,6 +26,20 @@ endif()
 find_package(Threads REQUIRED)
 include(Catch)
 
+if(WIN32 AND TARGET sonyctl)
+    add_executable(sony-discovery-soak EXCLUDE_FROM_ALL hardware/WindowsDiscoverySoak.cpp)
+    target_link_libraries(sony-discovery-soak PRIVATE sony-transport psapi)
+    sony_deploy_mingw_runtime(sony-discovery-soak)
+    add_executable(sony-xm6-readonly-probe EXCLUDE_FROM_ALL hardware/Xm6ReadOnlyProbe.cpp)
+    target_link_libraries(sony-xm6-readonly-probe PRIVATE sony-core)
+    sony_deploy_mingw_runtime(sony-xm6-readonly-probe)
+endif()
+
+# On Windows the MinGW runtime is deployed beside the test binaries only
+# after linking. Discovering Catch2 tests at build time would launch the
+# executable before those DLLs exist, so defer discovery until CTest runs.
+set(CMAKE_CATCH_DISCOVER_TESTS_DISCOVERY_MODE PRE_TEST)
+
 if(NOT TARGET sony-transport)
     add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../libs/sony-transport" "${CMAKE_CURRENT_BINARY_DIR}/libs/sony-transport")
 endif()
@@ -91,3 +105,25 @@ target_link_libraries(sony-core-tests PRIVATE Catch2::Catch2WithMain Threads::Th
 # about nine seconds in protocol timeouts. Allow headroom on slower runners
 # (see #62); the protocol's own request deadlines remain unchanged.
 catch_discover_tests(sony-core-tests PROPERTIES TIMEOUT 30)
+
+if(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    # Keep the MinGW runtime beside those binaries so CTest can launch them
+    # without relying on the developer shell's PATH.
+    get_filename_component(_mingw_runtime_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    foreach(_test_target IN ITEMS sony-protocol-tests sony-transport-tests sony-core-tests)
+        foreach(_runtime IN ITEMS libgcc_s_seh-1.dll libstdc++-6.dll libwinpthread-1.dll)
+            add_custom_command(TARGET ${_test_target} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_mingw_runtime_dir}/${_runtime}"
+                    "$<TARGET_FILE_DIR:${_test_target}>/${_runtime}"
+                VERBATIM)
+        endforeach()
+    endforeach()
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_FOUND AND TARGET sonyctl AND TARGET sonyd)
+        add_test(NAME windows-command-runtime
+            COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/smoke/windows_runtime.py"
+                $<TARGET_FILE:sonyctl> $<TARGET_FILE:sonyd>)
+        set_tests_properties(windows-command-runtime PROPERTIES TIMEOUT 30)
+    endif()
+endif()

@@ -16,7 +16,6 @@ const std::string headset = "11:22:33:44:55:66";
 const std::string peer = "AA:BB:CC:DD:EE:FF";
 class SessionTransport : public ReplyTransport {
 public:
-    uint8_t sequence{0};
     bool disconnectOnNoiseRead{false};
     bool disconnectOnNoiseWrite{false};
     size_t send(std::span<const std::byte> data) override {
@@ -53,7 +52,7 @@ public:
             else reply.insert(reply.end(), {p[2],static_cast<uint8_t>(p[2] << 4)});
             reply.insert(reply.end(), peer.begin(), peer.end());
         }
-        queueIncoming(FrameCodec::encode({DataType::DataMdrNo2,static_cast<uint8_t>(sequence++ & 1),reply}));
+        notify(std::move(reply), DataType::DataMdrNo2);
         return count;
     }
 };
@@ -111,6 +110,84 @@ TEST_CASE("Desktop session preserves all noise EQ DSEE multipoint and power comm
     CHECK(f.transport->attempts.size() == 1);
     REQUIRE(f.run("poweroff").success);
     CHECK_FALSE(f.service.isConnected());
+}
+
+TEST_CASE("Structured JSON protocol exposes Qt multipoint actions", "[core][json][multipoint]") {
+    Fixture f;
+    REQUIRE(f.run("refresh battery").success);
+    const auto request = [](const std::string& action, const std::string& address = {}) {
+        JsonProtocol::Json params = {{"action", action}};
+        if (!address.empty()) params["address"] = address;
+        if (action == "keep") params["enabled"] = true;
+        return JsonProtocol::Json{
+            {"version", JsonProtocol::Version},
+            {"id", 1},
+            {"method", "multipoint"},
+            {"params", params}
+        };
+    };
+
+    const auto listed = JsonProtocol::execute(request("list"), f.service);
+    REQUIRE(listed["ok"] == true);
+    REQUIRE(listed["data"]["multipoint"]["devices"].size() == 1);
+    CHECK(listed["data"]["multipoint"]["devices"][0]["address"] == peer);
+
+    const auto pinned = JsonProtocol::execute(
+        request("keep"), f.service);
+    CHECK(pinned["ok"] == true);
+
+    const auto defaulted = JsonProtocol::execute(
+        request("default", peer), f.service);
+    CHECK(defaulted["ok"] == true);
+
+    const auto switched = JsonProtocol::execute(
+        request("source", peer), f.service);
+    CHECK(switched["ok"] == true);
+    CHECK(switched["data"]["multipoint"]["devices"].size() == 1);
+
+    const auto disconnected = JsonProtocol::execute(
+        request("disconnect", peer), f.service);
+    CHECK(disconnected["ok"] == true);
+
+    const auto connected = JsonProtocol::execute(
+        request("connect", peer), f.service);
+    CHECK(connected["ok"] == true);
+
+    const auto unpaired = JsonProtocol::execute(
+        request("unpair", peer), f.service);
+    CHECK(unpaired["ok"] == true);
+}
+TEST_CASE("Multipoint disconnect pauses only when the target is this computer", "[core][json][multipoint][no-steal]") {
+    class LocalDiscovery : public FakeDeviceDiscovery {
+    public:
+        std::string local;
+        std::vector<std::string> localAddresses() override { return {local}; }
+    };
+    auto transport = std::make_shared<SessionTransport>();
+    auto discovery = std::make_shared<LocalDiscovery>();
+    discovery->addDevice({"WH-1000XM5", DeviceAddress(headset), true, true});
+    discovery->local = peer;
+    SECTION("Disconnecting this computer pauses control") {}
+    SECTION("Disconnecting another device retains control") { discovery->local = "00:11:22:33:44:55"; }
+    DeviceService service(transport, discovery, [] { return DeviceService::Clock::now(); },
+                          InitialRefresh::None, false, DeviceService::RecoveryPolicy::RequireSystemConnection);
+    service.connect(DeviceAddress(headset), "WH-1000XM5");
+    transport->clearSent();
+    const auto response = JsonProtocol::execute({{"version",1},{"id",1},{"method","multipoint"},
+        {"params", {{"action","disconnect"},{"address",peer}}}}, service);
+    INFO(response.dump());
+    REQUIRE(response["ok"] == true);
+    const bool local = discovery->local == peer;
+    CHECK(service.isConnected() == !local);
+    CHECK(service.connectionPreferences().pausedAddresses.empty() == !local);
+    size_t listReads = 0;
+    for (const auto& raw : transport->sentFrames()) {
+        const auto frame = FrameCodec::decode(raw);
+        if (frame.type == DataType::DataMdrNo2 && frame.payload == std::vector<uint8_t>{0x36,2}) ++listReads;
+    }
+    CHECK(listReads == (local ? 1 : 2));
+    service.tick();
+    CHECK(transport->attempts.size() == 1);
 }
 TEST_CASE("Desktop session switches protocol generation and resets old cached state", "[core][desktop][v1]") {
     Fixture f;

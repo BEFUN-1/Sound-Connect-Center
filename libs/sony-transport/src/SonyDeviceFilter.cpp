@@ -17,8 +17,8 @@ int hexValue(char c) {
     return -1;
 }
 
-constexpr std::array<std::string_view, 7> kSonyNameTokens = {
-    "WH-", "WF-", "WI-", "MDR-", "LINKBUDS", "ULT WEAR", "SONY",
+constexpr std::array<std::string_view, 6> kSonyHeadphoneNameTokens = {
+    "WH-", "WF-", "WI-", "MDR-", "LINKBUDS", "ULT WEAR",
 };
 
 } // namespace
@@ -53,13 +53,17 @@ bool hasSonyName(std::string_view name) {
     std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char c) {
         return static_cast<char>(std::toupper(c));
     });
-    return std::any_of(kSonyNameTokens.begin(), kSonyNameTokens.end(), [&](std::string_view token) {
+    return std::any_of(kSonyHeadphoneNameTokens.begin(), kSonyHeadphoneNameTokens.end(), [&](std::string_view token) {
         return upper.find(token) != std::string::npos;
     });
 }
 
 bool isSonyCandidate(const DiscoveredDevice& device) {
-    return hasSonyOui(device.address.str()) || hasSonyName(device.name);
+    // Sony OUIs are shared by televisions, cameras, speakers, and game
+    // accessories. They are useful metadata, but are not a safe auto-connect
+    // signal. Restrict automatic discovery to headphone model families; the
+    // Bluetooth connector still verifies the negotiated Sony service UUID.
+    return addressOui(device.address.str()).has_value() && hasSonyName(device.name);
 }
 
 SonyDeviceDiscovery::SonyDeviceDiscovery(std::unique_ptr<IDeviceDiscovery> inner)
@@ -74,6 +78,10 @@ std::vector<DiscoveredDevice> SonyDeviceDiscovery::discover() {
                                  [](const DiscoveredDevice& device) { return !isSonyCandidate(device); }),
                   devices.end());
     return devices;
+}
+
+std::vector<std::string> SonyDeviceDiscovery::localAddresses() {
+    return _inner ? _inner->localAddresses() : std::vector<std::string>{};
 }
 
 } // namespace sony::transport

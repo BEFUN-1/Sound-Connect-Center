@@ -523,15 +523,15 @@ MigrationBackup/
 .ionide/
 
 # End of https://www.toptal.com/developers/gitignore/api/c++,visualstudio,python
-Client/imgui.ini
-
 # vscode
 .vscode/
 
-# linux build
-Client/linux/sonyheadphonesclient.build/
-
 # CPack and packaging artifacts
+*.zip
+*.7z
+*.tar.gz
+/archive/
+/SHA256SUMS*
 _CPack_Packages/
 CPackConfig.cmake
 CPackSourceConfig.cmake
@@ -546,17 +546,8 @@ Client/resources/devices/output/
 # Local instrumented CMake builds
 /build-*/
 
-# Local Windows desktop builds and installer staging
-/desktop-app/bin/
-/desktop-app/obj/
-/desktop-app/installer/bin/
-/desktop-app/installer/obj/
-/desktop-app/installer/payload/
-/desktop-app/installer/staging/
-/desktop-app/installer/payload.zip
-/desktop-app/installer/*.stub.exe
-/desktop-app/*.log
-/desktop-app/*.stderr
-/desktop-app/hardware-*.json
+# Local QA output
 /_qa/
-/SonyDeviceCenter-Windows-x64.zip
+/tray-battery-*.png
+/tray-resource-soak.csv
+/ui-lifecycle-results.txt

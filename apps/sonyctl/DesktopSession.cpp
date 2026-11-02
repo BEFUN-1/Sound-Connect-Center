@@ -66,7 +66,8 @@ Json snapshotFromState(const protocol::DeviceStateSnapshot& state, const std::st
         {"equalizer", {{"preset", state->equalizer.preset}, {"presetName", protocol::equalizerPresetName(state->equalizer.preset)},
             {"clearBass", state->equalizer.clearBass}, {"bands", state->equalizer.bands}}},
         {"dsee", state->dsee}, {"speakToChat", state->speakToChat}, {"adaptiveVolume", state->adaptiveVolume},
-        {"autoPowerOff", state->autoPowerOff}, {"codec", state->codec.empty() ? "Unknown" : state->codec},
+        {"autoPowerOff", state->autoPowerOff}, {"autoPowerOffOptions", state->autoPowerOffOptions},
+        {"codec", state->codec.empty() ? "Unknown" : state->codec},
         {"firmware", state->firmware.empty() ? "Unknown" : state->firmware}
     };
 }
@@ -106,14 +107,15 @@ IpcResponse DesktopSession::execute(const std::string& command, const std::strin
         if (command != "snapshot" && !refresh && cmd.type == IpcCommandType::Unknown)
             throw std::invalid_argument("Unknown desktop command");
         if (command != "snapshot") {
-            const auto target = normalized(requestedAddress);
+            const auto target = normalized(requestedAddress.empty() ? _service.selectedAddress() : requestedAddress);
+            if (target.empty()) throw std::invalid_argument("Select a headphone address before sending commands");
             if (!_service.isConnected() || (!target.empty() && target != normalized(_service.selectedAddress()))) {
                 // Clear the old generation before connecting another headset.
                 _service.disconnect();
                 unsubscribe();
                 const auto devices = _service.discoverDevices();
                 const auto found = std::find_if(devices.begin(), devices.end(), [&](const auto& d) {
-                    return target.empty() || normalized(d.address) == target;
+                    return normalized(d.address) == target;
                 });
                 if (found == devices.end()) throw std::runtime_error("Selected headphones are unavailable");
                 _service.connect(transport::DeviceAddress(found->address), found->name);
@@ -131,6 +133,9 @@ IpcResponse DesktopSession::execute(const std::string& command, const std::strin
             else if (command == "refresh eq") device->refreshEqualizer();
             else if (command == "refresh dsee") device->refreshDsee();
             else if (command == "refresh multipoint") device->refreshMultipoint();
+            else if (command == "refresh settings") {
+                for (int step = 0; step < 8; ++step) device->refreshSettingsStep();
+            }
             else throw std::invalid_argument("Unknown refresh feature");
             if (!_service.isConnected())
                 throw std::runtime_error("Bluetooth link closed while refreshing device state");

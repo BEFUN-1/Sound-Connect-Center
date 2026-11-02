@@ -20,22 +20,23 @@ std::optional<std::uint32_t> addressOui(std::string_view address);
 /// electronics company. Sony Interactive Entertainment (PlayStation) is excluded.
 bool hasSonyOui(std::string_view address);
 
-/// True when the name contains "Sony" or a Sony model prefix such as "WH-".
+/// True when the name contains a Sony headphone model prefix such as "WH-".
 bool hasSonyName(std::string_view name);
 
-/// True when the address prefix or the name identifies a Sony device. The name
-/// check finds a Sony model with an address outside the OUI table, and the address
-/// check finds a device that the user renamed.
+/// True for a valid address whose name identifies a Sony headphone model. OUIs are not
+/// sufficient because Sony uses them across televisions, cameras, speakers,
+/// and other Bluetooth products.
 bool isSonyCandidate(const DiscoveredDevice& device);
 
 /// Wraps a platform discovery and keeps only the devices that isSonyCandidate()
-/// accepts. The service tries each discovered device, so an unfiltered list makes it
-/// open connections to phones, speakers, and other headphones.
+/// accepts. This identifies candidates only; DeviceService still requires an
+/// explicitly selected address before opening a control connection.
 class SonyDeviceDiscovery : public IDeviceDiscovery {
 public:
     explicit SonyDeviceDiscovery(std::unique_ptr<IDeviceDiscovery> inner);
 
     std::vector<DiscoveredDevice> discover() override;
+    std::vector<std::string> localAddresses() override;
 
 private:
     std::unique_ptr<IDeviceDiscovery> _inner;

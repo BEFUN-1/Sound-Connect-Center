@@ -7,6 +7,7 @@ public:
     using Json = nlohmann::json;
     static constexpr int Version = 1;
     static Json snapshot(IDeviceService& service);
+    static Json stateSnapshot(protocol::DeviceStateSnapshot state, bool connected);
     static Json execute(const Json& request, IDeviceService& service);
     static std::string executeLine(std::string_view line, IDeviceService& service);
 };

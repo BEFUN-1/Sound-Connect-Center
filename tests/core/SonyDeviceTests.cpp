@@ -39,6 +39,23 @@ public:
                     // Auto-respond to known inquiry requests
                     if (!frame.payload.empty()) {
                         uint8_t op = frame.payload[0];
+                        if (op == 0x68) {
+                            _ncReply = frame.payload;
+                            _ncReply[0] = 0x67;
+                        }
+                        if (op == 0x58) {
+                            if (frame.payload[3] > 0) _eqReply = frame.payload;
+                            _eqReply[0] = 0x57;
+                            _eqReply[2] = frame.payload[2];
+                        }
+                        if (op == 0xe8) _dsee = frame.payload[2];
+                        if (op == 0xf8) _toggles[frame.payload[1]] = frame.payload[2];
+                        if (op == 0xf6) {
+                            queueIncoming(FrameCodec::encode(SonyFrame{
+                                .type = DataType::DataMdr, .sequence = _nextRespSeq(),
+                                .payload = {0xf7, frame.payload[1],
+                                    _toggles.contains(frame.payload[1]) ? _toggles[frame.payload[1]] : uint8_t{1}}}));
+                        }
                         if (op == 0x00) { // Init query
                             queueIncoming(FrameCodec::encode(SonyFrame{
                                 .type = DataType::DataMdr,
@@ -55,19 +72,28 @@ public:
                             queueIncoming(FrameCodec::encode(SonyFrame{
                                 .type = DataType::DataMdr,
                                 .sequence = _nextRespSeq(),
-                                .payload = {0x67, 0x17, 0x01, 0x01, 0x00, 0x00, 0x00}
+                                .payload = _ncReply
                             }));
                         } else if (op == 0x56) { // EQ query
                             queueIncoming(FrameCodec::encode(SonyFrame{
                                 .type = DataType::DataMdr,
                                 .sequence = _nextRespSeq(),
-                                .payload = {0x57, 0x00, 0x00, 0x06, 0x0a, 0x0a, 0x0a, 0x0a, 0x0a, 0x0a}
+                                .payload = _eqReply
                             }));
+                        } else if (op == 0x26 || op == 0x20) {
+                            const auto type = frame.payload[1];
+                            std::vector<uint8_t> reply = op == 0x26
+                                ? std::vector<uint8_t>{0x27, type, _autoMode, _autoTimer}
+                                : std::vector<uint8_t>{0x21, type, 7, 0, 1, 2, 3, 4, 0x10, 0x11};
+                            queueIncoming(FrameCodec::encode(SonyFrame{
+                                .type = DataType::DataMdr, .sequence = _nextRespSeq(), .payload = reply}));
+                        } else if (op == 0x28) {
+                            _autoMode = frame.payload[2]; _autoTimer = frame.payload[3];
                         } else if (op == 0xe6) { // DSEE query
                             queueIncoming(FrameCodec::encode(SonyFrame{
                                 .type = DataType::DataMdr,
                                 .sequence = _nextRespSeq(),
-                                .payload = {0xe7, 0x01, 0x00}
+                                .payload = {0xe7, 0x01, _dsee}
                             }));
                         }
                     }
@@ -82,6 +108,11 @@ private:
         return _respSeq++;
     }
     uint8_t _respSeq{0};
+    uint8_t _autoMode{0x11}, _autoTimer{0};
+    uint8_t _dsee{0};
+    std::map<uint8_t, uint8_t> _toggles;
+    std::vector<uint8_t> _ncReply{0x67,0x17,1,1,0,0,0};
+    std::vector<uint8_t> _eqReply{0x57,0,0,6,10,10,10,10,10,10};
 };
 
 } // namespace

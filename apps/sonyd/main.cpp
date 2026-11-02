@@ -174,7 +174,13 @@ int main(int argc, char* argv[]) {
 
     auto service = std::make_shared<DeviceService>(transport, discovery);
 
-    service->startAutoConnect(targetAddress);
+    if (!targetAddress.empty()) {
+        try { service->startAutoConnect(targetAddress); }
+        catch (const std::exception& ex) {
+            std::cerr << "[sonyd] Invalid target address: " << ex.what() << "\n";
+            return 1;
+        }
+    }
 
     // Start IPC Server
     auto server = std::make_unique<IpcServer>(service, socketPath);

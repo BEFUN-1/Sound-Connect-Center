@@ -3,6 +3,7 @@
 #include "sony/protocol/FrameCodec.h"
 #include "sony/transport/FakeTransport.h"
 #include "ReplyingFakeTransport.h"
+#include <algorithm>
 
 using namespace sony;
 using namespace sony::protocol;
@@ -74,6 +75,98 @@ TEST_CASE("ProtocolV2: handles noise control query and command", "[protocol][v2]
         auto sent = FrameCodec::decode(fake.lastSentFrame());
         REQUIRE(sent.payload == std::vector<uint8_t>{0x68, 0x17, 0x01, 1, 0, 0, 0});
     }
+}
+
+TEST_CASE("ProtocolV2: ordinary auto-power-off uses the non-wearing table", "[protocol][v2][autopoweroff]")
+{
+    ReplyingFakeTransport fake;
+    SonyProtocolSession session(&fake);
+    session.connect("11:22:33:44:55:66");
+    ProtocolV2 v2(session);
+
+    const std::vector<std::vector<uint8_t>> expected = {
+        {0x28, 0x04, 0x11, 0x00}, // Off
+        {0x28, 0x04, 0x00, 0x00}, // 5 minutes
+        {0x28, 0x04, 0x01, 0x00}, // 30 minutes
+        {0x28, 0x04, 0x02, 0x00}, // 1 hour
+        {0x28, 0x04, 0x03, 0x00}, // 3 hours
+        {0x28, 0x04, 0x04, 0x00}, // 15 minutes
+    };
+
+    for (std::size_t index = 0; index < expected.size(); ++index) {
+        fake.queueReply({SonyFrame{
+            .type = DataType::Ack,
+            .sequence = static_cast<uint8_t>(index),
+        }});
+        v2.setAutoPowerOff(static_cast<int>(index));
+        REQUIRE(FrameCodec::decode(fake.lastSentFrame()).payload == expected[index]);
+    }
+}
+
+TEST_CASE("ProtocolV2: XM6 uses wearing-aware auto-power and adaptive noise control",
+          "[protocol][v2][xm6]")
+{
+    ReplyingFakeTransport fake;
+    SonyProtocolSession session(&fake);
+    session.connect("11:22:33:44:55:66");
+    ProtocolV2 v2(session, /*tenBandEqualizer=*/true, /*wearingDetection=*/true);
+
+    fake.queueReply({SonyFrame{
+        .type = DataType::Ack,
+        .sequence = 0,
+    }});
+    v2.setAutoPowerOff(5);
+    REQUIRE(FrameCodec::decode(fake.lastSentFrame()).payload ==
+            std::vector<uint8_t>{0x28, 0x05, 0x10, 0x00});
+
+    fake.queueIncoming(FrameCodec::encode(SonyFrame{
+        .type = DataType::Ack,
+        .sequence = 1,
+    }));
+    fake.queueIncoming(FrameCodec::encode(SonyFrame{
+        .type = DataType::DataMdr,
+        .sequence = 0,
+        .payload = {0x67, 0x19, 0x01, 0x01, 0x00, 0x00, 10, 1, 2},
+    }));
+    const auto noise = v2.getNoiseControl();
+    REQUIRE(noise.mode == NoiseControlMode::NoiseCancelling);
+    const auto sentFrames = fake.sentFrames();
+    const auto request = std::find_if(sentFrames.rbegin(), sentFrames.rend(),
+        [](const auto& bytes) {
+            const auto frame = FrameCodec::decode(bytes);
+            return frame.type == DataType::DataMdr && frame.payload.size() >= 2 &&
+                frame.payload[0] == 0x66;
+        });
+    REQUIRE(request != sentFrames.rend());
+    REQUIRE(FrameCodec::decode(*request).payload == std::vector<uint8_t>{0x66, 0x19});
+}
+
+TEST_CASE("ProtocolV2: auto-power readback separates active mode from remembered timer",
+          "[protocol][v2][autopoweroff][regression]")
+{
+    ReplyingFakeTransport fake;
+    SonyProtocolSession session(&fake);
+    session.connect("11:22:33:44:55:66");
+    ProtocolV2 v2(session, true, true);
+    fake.queueReply({
+        SonyFrame{.type = DataType::Ack, .sequence = 0},
+        SonyFrame{.type = DataType::DataMdr, .sequence = 1, .payload = {0x27, 0x05, 0x10, 0x03}}
+    });
+    REQUIRE(v2.getAutoPowerOff() == 5);
+}
+
+TEST_CASE("ProtocolV2: unknown auto-power mode is not displayed as disabled",
+          "[protocol][v2][autopoweroff][regression]")
+{
+    ReplyingFakeTransport fake;
+    SonyProtocolSession session(&fake);
+    session.connect("11:22:33:44:55:66");
+    ProtocolV2 v2(session, true, true);
+    fake.queueReply({
+        SonyFrame{.type = DataType::Ack, .sequence = 0},
+        SonyFrame{.type = DataType::DataMdr, .sequence = 1, .payload = {0x27, 0x05, 0x7e, 0x00}}
+    });
+    REQUIRE_THROWS_AS(v2.getAutoPowerOff(), SonyException);
 }
 
 TEST_CASE("ProtocolV2: handles equalizer queries and settings", "[protocol][v2]")

@@ -20,10 +20,18 @@ sudo dnf install ./sony-device-center-*-Linux.rpm
 sudo apt install ./sony-device-center-*-Linux.deb
 ```
 
-Windows: run `SonyDeviceCenter-Setup.exe`, or use `SonyDeviceCenter.exe` from
-the portable package. The Windows desktop package bundles the .NET 8 Desktop
-Runtime and the native backend; the Qt packages bundle the Qt and MSVC runtimes.
-The Linux packages depend on system Qt 6.
+Windows: run `SonyDeviceCenter-Qt2-<version>-Setup.exe` normally, without
+administrator privileges, or start `bin/sony-device-center.exe` from the
+portable ZIP. Packages bundle Qt and the compiler runtime; no .NET runtime
+is required. Close the tray application before upgrading or uninstalling.
+The installer uses a fixed per-user directory and rejects custom `/D` paths.
+Linux packages depend on system Qt 6.
+
+Select a headset on first use. Later startups and recovery only use its saved
+Bluetooth address. An unavailable device does not select another headset.
+
+Each platform includes a `SOURCE-<platform>.json` with the source commit and tag.
+Use `SHA256SUMS` to check the downloaded files.
 
 macOS (13+, Apple silicon and Intel): open the `.dmg` and drag **Sony Device
 Center** to Applications. `sonyd` and `sonyctl` live inside the bundle at
@@ -53,8 +61,8 @@ The recursive `-r` is required for quarantined files inside the bundle.
 - **IPC is Unix-socket only.** On Windows `sonyd` cannot serve `sonyctl` or the GUI —
   it reports that it is listening while nothing is. Both clients fall back to a direct
   Bluetooth session, which does work.
-- Protocol generation is selected from the Bluetooth device name, not from the SDP
-  service UUID. Connecting by address alone to a Protocol V1 headset is not yet safe.
-- The desktop app reads device state once at startup and does not refresh.
+- Protocol support and hardware acceptance vary by device and firmware; see the
+  repository's device matrix. Notifications and periodic reads update state,
+  but an ACK alone does not prove an audible effect.
 
 ---

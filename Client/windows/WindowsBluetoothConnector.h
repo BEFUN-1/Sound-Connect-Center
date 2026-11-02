@@ -12,6 +12,8 @@
 #include <string>
 #include "ByteMagic.h"
 #include <atomic>
+#include <chrono>
+#include <mutex>
 
 class WindowsBluetoothConnector final : public IBluetoothConnector
 {
@@ -28,6 +30,7 @@ public:
 	virtual bool isConnected() noexcept;
 
 	virtual std::vector<BluetoothDevice> getConnectedDevices() noexcept(false);
+	std::vector<std::string> getLocalAddresses() override;
 	virtual SonyProtocolVersion getProtocolVersion() noexcept;
 
 private:
@@ -35,8 +38,11 @@ private:
 	std::string _wstringToUtf8(const std::wstring& wstr);
 	bool _tryConnect(const char* uuid, SOCKADDR_BTH& sab);
 
-	SOCKET _socket = INVALID_SOCKET;
+	std::atomic<SOCKET> _socket{INVALID_SOCKET};
 	std::atomic<bool> _connected = false;
+	std::atomic<bool> _cancelled{false};
+	std::mutex _socketMutex;
+	void _wait(bool readable, std::chrono::steady_clock::time_point deadline);
 	SonyProtocolVersion _protocolVersion = SonyProtocolVersion::V1;
 	void _initSocket();
 };

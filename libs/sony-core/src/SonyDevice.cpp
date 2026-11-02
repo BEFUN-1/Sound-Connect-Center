@@ -4,8 +4,12 @@
 #include "sony/protocol/ProtocolV2.h"
 #include "sony/protocol/MultipointCodec.h"
 #include "sony/transport/Logger.h"
+#include <atomic>
 
 namespace sony::core {
+namespace {
+std::atomic<uint64_t> nextSessionId{0};
+}
 
 SonyDevice::SonyDevice(
     std::shared_ptr<transport::ITransport> transport,
@@ -31,12 +35,10 @@ void SonyDevice::connect(const transport::DeviceAddress& address, std::string_vi
         disconnect();
     }
 
-    // Resolve the generation on every connect, including when no name is
-    // supplied. An unknown name yields the V1 fallback profile, which is the
-    // safe direction: opcode 0x22 requests the battery on V2 but means POWER
-    // OFF on V1, so a V1 device driven as V2 switches itself off. Carrying a
-    // stale V2 version over from a previously connected device would do the
-    // same, which is why this no longer runs only for a non-empty name.
+    // A Bluetooth name is only a profile hint. The platform connector can
+    // determine the actual generation from the SDP/RFCOMM service UUID after
+    // connect(), and that negotiated result must win because opcode 0x22 is
+    // battery on V2 but POWER OFF on V1.
     _profile = protocol::DeviceProfileRegistry::getProfileForDevice(deviceName);
     _capabilities = _profile.capabilities;
     _capabilities.powerOff = _profile.model != protocol::SonyModel::Unknown;
@@ -52,9 +54,32 @@ void SonyDevice::connect(const transport::DeviceAddress& address, std::string_vi
     _protocol.reset();
     _session.reset();
 
+    // A failed switch must not expose the previous device's confirmed values.
     {
         std::lock_guard lock(_stateMutex);
-        _state = {}; _refreshStep = 0;
+        _state = {};
+        _state.sessionId = ++nextSessionId;
+        _refreshStep = 0;
+    }
+
+    _transport->connect(address);
+
+    if (const auto negotiated = _transport->protocolVersion(); negotiated.has_value()) {
+        if (*negotiated != _profile.protocol) {
+            Logger::warn(LogCategory::Device,
+                         "Bluetooth service UUID and device-name profile disagree; using negotiated protocol");
+            // A mismatched name cannot safely supply feature capabilities for
+            // the negotiated generation. Keep the display name, but start
+            // with a conservative empty capability set until probing exists.
+            _profile.protocol = *negotiated;
+            _profile.capabilities = {};
+            _capabilities = {};
+        }
+        _version = *negotiated;
+    }
+
+    {
+        std::lock_guard lock(_stateMutex);
         const auto& c = _capabilities;
         for (const auto& [name, supported] : std::initializer_list<std::pair<std::string, bool>>{
             {"battery",c.battery},{"noiseControl",c.noiseCancelling || c.ambientSound},
@@ -63,7 +88,7 @@ void SonyDevice::connect(const transport::DeviceAddress& address, std::string_vi
             {"multipoint",c.multipoint && _version == SonyProtocolVersion::V2}})
             _state.features[name].availability = supported ? "unknown" : "unsupported";
     }
-    _transport->connect(address);
+
     _setupSession();
 
     if (_protocol) {
@@ -88,13 +113,14 @@ void SonyDevice::disconnect() noexcept {
     if (_session) {
         _session->disconnect();
     }
-    if (_transport && _transport->isConnected()) {
+    if (_transport) {
         _transport->disconnect();
     }
     {
         std::lock_guard lock(_stateMutex);
         for (auto& [name, status] : _state.features)
             if (status.availability == "valid") status.availability = "stale";
+        ++_state.revision;
     }
     _dispatcher.dispatch(protocol::ConnectionChanged{
         .connected = false,
@@ -137,11 +163,13 @@ protocol::DeviceEventDispatcher& SonyDevice::events() noexcept {
 }
 
 void SonyDevice::_setupSession() {
-    _session = std::make_unique<protocol::SonyProtocolSession>(_transport.get());
+    _session = std::make_unique<protocol::SonyProtocolSession>(_transport.get(),
+        protocol::SonyProtocolSession::ReplyPolicy::FreshOnly);
     if (_version == SonyProtocolVersion::V1) {
         _protocol = std::make_unique<protocol::ProtocolV1>(*_session);
     } else {
-        _protocol = std::make_unique<protocol::ProtocolV2>(*_session, _capabilities.tenBandEqualizer);
+        _protocol = std::make_unique<protocol::ProtocolV2>(
+            *_session, _capabilities.tenBandEqualizer, _capabilities.wearSensor);
     }
 
     _session->onNotification([this](const protocol::SonyFrame& frame) {
@@ -164,10 +192,33 @@ void SonyDevice::_onNotification(const protocol::SonyFrame& frame) {
             } else return;
             feature = "multipoint";
         } else {
-        if (frame.type != protocol::DataType::DataMdr || !_dispatcher.parseNotificationPayload(frame.payload, _state, false)) return;
+        if (frame.type != protocol::DataType::DataMdr) return;
+        const auto& p = frame.payload;
+        if (_version == SonyProtocolVersion::V1 && p.size() >= 4 && (p[0] == 0x11 || p[0] == 0x13)) {
+            if (p[1] == 0) {
+                _state.battery.main = p[2];
+                _state.battery.charging = p[3] == 1;
+            } else if (p[1] == 1 && p.size() >= 6) {
+                _state.battery.left = p[2]; _state.battery.right = p[4];
+                _state.battery.main = (std::min)(int(p[2]), int(p[4]));
+                _state.battery.charging = p[3] == 1 || p[5] == 1;
+            } else if (p[1] == 2) _state.battery.caseBattery = p[2];
+            else return;
+            feature = "battery";
+        } else if (_version == SonyProtocolVersion::V1 && p.size() >= 8 &&
+                   (p[0] == 0x67 || p[0] == 0x69) && p[1] == 2) {
+            auto& nc = _state.noiseControl;
+            nc.mode = p[2] == 0 ? protocol::NoiseControlMode::Off :
+                p[4] == 0 ? protocol::NoiseControlMode::Ambient : protocol::NoiseControlMode::NoiseCancelling;
+            nc.ambientLevel = nc.mode == protocol::NoiseControlMode::Ambient ? p[7] : 0;
+            nc.focusOnVoice = p[6] == 1;
+            feature = "noiseControl";
+        } else {
+        if (!_dispatcher.parseNotificationPayload(frame.payload, _state, false)) return;
         const auto opcode = frame.payload[0];
         feature = (opcode == 0x23 || opcode == 0x25) ? "battery" :
             (opcode == 0x67 || opcode == 0x69) ? "noiseControl" : "equalizer";
+        }
         }
         _markSuccess(feature);
         updated = std::make_shared<const protocol::DeviceState>(_state);
@@ -183,6 +234,10 @@ void SonyDevice::refreshAll() {
     refreshNoiseControl();
     refreshEqualizer();
     refreshDsee();
+    if (_capabilities.autoPowerOff) {
+        try { _readAutoPowerOff(); }
+        catch (const SonyException& ex) { _markError("autoPowerOff", ex); }
+    }
 }
 
 void SonyDevice::refreshBattery() {
@@ -260,13 +315,17 @@ void SonyDevice::refreshDsee() {
 
 void SonyDevice::setNoiseControl(const protocol::NoiseControlState& nc) {
     if (!_protocol) return;
-    _protocol->setNoiseControl(nc);
-    {
+    _confirmSetting("noiseControl", [&] {
+        _protocol->setNoiseControl(nc);
+        const auto confirmed = _protocol->getNoiseControl();
+        if (confirmed.mode != nc.mode || (nc.mode == protocol::NoiseControlMode::Ambient &&
+            (confirmed.ambientLevel != nc.ambientLevel || confirmed.focusOnVoice != nc.focusOnVoice)))
+            throw SonyException(SonyErrorCode::InvalidResponse, "Headset did not confirm the noise-control setting");
         std::lock_guard lock(_stateMutex);
-        _state.noiseControl = nc;
+        _state.noiseControl = confirmed;
         _markSuccess("noiseControl");
-    }
-    _dispatcher.dispatch(protocol::NoiseControlChanged{nc});
+    });
+    _dispatcher.dispatch(protocol::NoiseControlChanged{snapshot()->noiseControl});
     _dispatcher.dispatch(protocol::DeviceStateChanged{snapshot()});
 }
 
@@ -285,73 +344,106 @@ void SonyDevice::setAmbient(int level, bool focusOnVoice) {
 }
 
 void SonyDevice::setEqualizerPreset(int preset) {
-    if (preset < 0 || preset > 255) return;
-    if (!_protocol) return;
-    _protocol->setEqualizerPreset(preset);
-    {
+    if (preset < 0 || preset > 255 || !_protocol) return;
+    _confirmSetting("equalizer", [&] {
+        _protocol->setEqualizerPreset(preset);
+        const auto confirmed = _protocol->getEqualizer();
+        if (confirmed.preset != preset)
+            throw SonyException(SonyErrorCode::InvalidResponse, "Headset did not confirm the equalizer preset");
         std::lock_guard lock(_stateMutex);
-        _state.equalizer.preset = preset;
+        _state.equalizer = confirmed;
         _markSuccess("equalizer");
-    }
+    });
     _dispatcher.dispatch(protocol::EqualizerChanged{snapshot()->equalizer});
     _dispatcher.dispatch(protocol::DeviceStateChanged{snapshot()});
 }
 
 void SonyDevice::setEqualizerCustom(int clearBass, const std::vector<int>& bands) {
     if (!_protocol) return;
-    _protocol->setEqualizerCustom(clearBass, bands);
-    {
+    _confirmSetting("equalizer", [&] {
+        _protocol->setEqualizerCustom(clearBass, bands);
+        const auto confirmed = _protocol->getEqualizer();
+        if (confirmed.preset != 0xa0 || confirmed.bands != bands ||
+            (_capabilities.clearBass && confirmed.clearBass != clearBass))
+            throw SonyException(SonyErrorCode::InvalidResponse, "Headset did not confirm the custom equalizer");
         std::lock_guard lock(_stateMutex);
-        _state.equalizer.preset = 0xa0; // MANUAL
-        _state.equalizer.clearBass = clearBass;
-        _state.equalizer.bands = bands;
+        _state.equalizer = confirmed;
         _markSuccess("equalizer");
-    }
+    });
     _dispatcher.dispatch(protocol::EqualizerChanged{snapshot()->equalizer});
     _dispatcher.dispatch(protocol::DeviceStateChanged{snapshot()});
 }
 
 void SonyDevice::setDsee(bool enabled) {
     if (!_protocol) return;
-    _protocol->setDsee(enabled);
+    _confirmSetting("dsee", [&] {
+        _protocol->setDsee(enabled);
+        const auto confirmed = _protocol->getDsee();
+        if (confirmed != enabled)
+            throw SonyException(SonyErrorCode::InvalidResponse, "Headset did not confirm the dsee setting");
+        std::lock_guard lock(_stateMutex);
+        _state.dsee = confirmed;
+        _markSuccess("dsee");
+    });
+    _dispatcher.dispatch(protocol::DeviceStateChanged{snapshot()});
+}
+
+void SonyDevice::_readAutoPowerOff() {
+    const auto value = _protocol->getAutoPowerOff();
+    const auto options = _protocol->getAutoPowerOffOptions();
     {
         std::lock_guard lock(_stateMutex);
-        _state.dsee = enabled;
-        _markSuccess("dsee");
+        _state.autoPowerOff = value;
+        _state.autoPowerOffOptions = options;
+        _markSuccess("autoPowerOff");
     }
-    _dispatcher.dispatch(protocol::DeviceStateChanged{snapshot()});
 }
 
 void SonyDevice::setAutoPowerOff(int index) {
     if (!_protocol) return;
-    _protocol->setAutoPowerOff(index);
-    {
-        std::lock_guard lock(_stateMutex);
-        _state.autoPowerOff = index;
-        _markSuccess("autoPowerOff");
+    try {
+        // Read the independent remembered duration before switching to the
+        // wearing mode, and reject modes absent from the headset capability.
+        _readAutoPowerOff();
+        const auto options = snapshot()->autoPowerOffOptions;
+        if (std::find(options.begin(), options.end(), index) == options.end())
+            throw SonyException(SonyErrorCode::Unsupported, "Headset does not support this auto-power-off setting");
+        _protocol->setAutoPowerOff(index);
+        _readAutoPowerOff();
+        if (snapshot()->autoPowerOff != index)
+            throw SonyException(SonyErrorCode::InvalidResponse, "Headset did not confirm the auto-power-off setting");
+    } catch (const SonyException& ex) {
+        _markError("autoPowerOff", ex);
+        throw;
     }
     _dispatcher.dispatch(protocol::DeviceStateChanged{snapshot()});
 }
 
 void SonyDevice::setSpeakToChat(bool enabled) {
     if (!_protocol) return;
-    _protocol->setSpeakToChat(enabled);
-    {
+    _confirmSetting("speakToChat", [&] {
+        _protocol->setSpeakToChat(enabled);
+        const auto confirmed = _protocol->getSpeakToChat();
+        if (confirmed != enabled)
+            throw SonyException(SonyErrorCode::InvalidResponse, "Headset did not confirm the speakToChat setting");
         std::lock_guard lock(_stateMutex);
-        _state.speakToChat = enabled;
+        _state.speakToChat = confirmed;
         _markSuccess("speakToChat");
-    }
+    });
     _dispatcher.dispatch(protocol::DeviceStateChanged{snapshot()});
 }
 
 void SonyDevice::setAdaptiveVolume(bool enabled) {
     if (!_protocol) return;
-    _protocol->setAdaptiveVolume(enabled);
-    {
+    _confirmSetting("adaptiveVolume", [&] {
+        _protocol->setAdaptiveVolume(enabled);
+        const auto confirmed = _protocol->getAdaptiveVolume();
+        if (confirmed != enabled)
+            throw SonyException(SonyErrorCode::InvalidResponse, "Headset did not confirm the adaptiveVolume setting");
         std::lock_guard lock(_stateMutex);
-        _state.adaptiveVolume = enabled;
+        _state.adaptiveVolume = confirmed;
         _markSuccess("adaptiveVolume");
-    }
+    });
     _dispatcher.dispatch(protocol::DeviceStateChanged{snapshot()});
 }
 
@@ -406,15 +498,73 @@ void SonyDevice::multipointUnpair(std::string_view address) {
     refreshMultipoint();
 }
 
+void SonyDevice::performMultipoint(std::string_view action, std::string_view address,
+                                  bool enabled, bool closesControlSession) {
+    if (!_protocol || !isConnected()) throw SonyException(SonyErrorCode::Disconnected);
+    _confirmSetting("multipoint", [&] {
+        auto state = _protocol->getMultipoint();
+        {
+            std::lock_guard lock(_stateMutex);
+            _state.multipoint = state;
+            if (state.supported) _markSuccess("multipoint");
+        }
+        if (!state.supported)
+            throw SonyException(SonyErrorCode::Unsupported, "Headset does not advertise multipoint management");
+        if (action == "list") return;
+        if (action == "source" || action == "default") {
+            const auto target = protocol::multipoint::address(address);
+            if (!state.sourceSwitchSupported ||
+                (action == "default" && !state.sourceKeepSupported))
+                throw SonyException(SonyErrorCode::Unsupported, "Playback source switching is not supported");
+            if (std::none_of(state.devices.begin(), state.devices.end(),
+                    [&](const auto& peer) { return peer.address == target && peer.connected; }))
+                throw std::invalid_argument("Playback source must be connected to the headphones");
+            const bool keeping = action == "default";
+            if (state.sourceKeeping != keeping) {
+                _protocol->useMultipointPreflight(state);
+                _protocol->setMultipointSourceKeeping(keeping);
+                state.sourceKeeping = keeping;
+            }
+            _protocol->useMultipointPreflight(state);
+            _protocol->switchMultipointSource(target);
+        } else {
+            _protocol->useMultipointPreflight(state);
+            if (action == "keep") _protocol->setMultipointSourceKeeping(enabled);
+            else if (action == "connect") _protocol->multipointConnect(address);
+            else if (action == "disconnect") _protocol->multipointDisconnect(address);
+            else if (action == "unpair") _protocol->multipointUnpair(address);
+            else throw std::invalid_argument("Unknown multipoint action");
+        }
+        if (!closesControlSession) {
+            const auto confirmed = _protocol->getMultipoint();
+            std::lock_guard lock(_stateMutex);
+            _state.multipoint = confirmed;
+            _markSuccess("multipoint");
+        }
+    });
+    _dispatcher.dispatch(protocol::DeviceStateChanged{snapshot()});
+}
+
+void SonyDevice::_confirmSetting(const std::string& feature, const std::function<void()>& operation) {
+    try { operation(); }
+    catch (const SonyException& ex) {
+        _markError(feature, ex);
+        _dispatcher.dispatch(protocol::DeviceStateChanged{snapshot()});
+        throw;
+    }
+}
 void SonyDevice::_markSuccess(const std::string& feature) {
     std::lock_guard lock(_stateMutex);
-    _state.features[feature] = {"valid", protocol::stateTimestamp(), {}};
+    auto& status = _state.features[feature];
+    status = {"valid", (std::max)(protocol::stateTimestamp(), status.lastSuccessMs + 1), {}};
+    ++_state.revision;
 }
 void SonyDevice::_markError(const std::string& feature, const SonyException& ex) {
     std::lock_guard lock(_stateMutex);
     auto& status = _state.features[feature];
     status.availability = ex.code() == SonyErrorCode::Unsupported ? "unsupported" : status.lastSuccessMs ? "stale" : "unknown";
     status.error = ex.what();
+    ++_state.revision;
 }
 void SonyDevice::refreshSettingsStep() {
     if (!_protocol || !isConnected()) return;
@@ -430,7 +580,7 @@ void SonyDevice::refreshSettingsStep() {
             feature = "codec"; auto value = _protocol->getCodec();
             if (value.empty()) throw SonyException(SonyErrorCode::InvalidResponse, "Codec not reported");
             std::lock_guard lock(_stateMutex); _state.codec = value; _markSuccess(feature);
-        } else if (step == 4 && _capabilities.firmwareInfo) {
+        } else if (step == 4 && _capabilities.firmwareInfo && snapshot()->firmware.empty()) {
             feature = "firmware"; auto value = _protocol->getFirmwareVersion();
             if (value.empty()) throw SonyException(SonyErrorCode::InvalidResponse, "Firmware not reported");
             std::lock_guard lock(_stateMutex); _state.firmware = value; _markSuccess(feature);
@@ -441,8 +591,7 @@ void SonyDevice::refreshSettingsStep() {
             feature = "adaptiveVolume"; auto value = _protocol->getAdaptiveVolume();
             std::lock_guard lock(_stateMutex); _state.adaptiveVolume = value; _markSuccess(feature);
         } else if (step == 7 && _capabilities.autoPowerOff) {
-            feature = "autoPowerOff"; auto value = _protocol->getAutoPowerOff();
-            std::lock_guard lock(_stateMutex); _state.autoPowerOff = value; _markSuccess(feature);
+            feature = "autoPowerOff"; _readAutoPowerOff();
         }
     } catch (const SonyException& ex) { if (!feature.empty()) _markError(feature, ex); }
     _dispatcher.dispatch(protocol::DeviceStateChanged{snapshot()});

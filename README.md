@@ -1,162 +1,120 @@
 # Sony Device Center
 
-[English version](README.en.md)
+**在 Windows 桌面查看索尼耳机电量、切换降噪与环境音、调整均衡器。**
 
-这是一个面向索尼耳机的开源实验项目，用于研究并尝试通过蓝牙连接读取和修改部分设备状态。
+Sony Device Center 是一个独立的开源耳机控制项目，提供 Qt 6 / QML 桌面界面、`sonyctl` 命令行工具、`sonyd` 后台服务，以及可复用的 C++20 蓝牙与协议库。无需登录 Sony 账号。
 
-项目包含：
+[下载 2.0.6 开发预览版](https://github.com/BEFUN-1/Sound-Connect-Center/releases/tag/v2.0.6-dev) · [English](README.en.md) · [使用指南](docs/getting-started.md) · [文档导航](docs/README.md)
 
-- 基于 C++ 和 Qt 的桌面程序
-- `sonyctl` 命令行工具
-- `sonyd` 后台服务
-- 蓝牙传输、协议解析和设备状态相关的 C++ 代码
-- Windows 桌面启动器和安装脚本
+![Sony Device Center 2.0.6 中文概览，使用模拟 WH-1000XM6 数据](docs/screenshots/v2.0.6/overview.png)
 
-项目仍在开发中。不同型号、固件和操作系统的表现可能不同，代码中已经实现的命令不代表所有设备都支持。使用前请查看测试结果和设备说明，不要把本项目当作索尼官方软件的替代品。
+> 当前下载为 **Windows x64 / 2.0.6-dev / 未签名 Development 预发布**，发布日期为 2026-11-02。它是开发验证包，功能与兼容性仍在完善。界面截图使用模拟耳机和隔离设置生成，不包含真实蓝牙地址、配对设备名称、账户或桌面内容；截图不代表所有功能都经过真机验证。
 
-## 当前状态
+## 可以做什么
 
-当前发布版本为 **1.3**。Windows 版本包含蓝牙音频在手机通话后切回电脑时的控制通道恢复修复，发布验证记录见 [`docs/release-v1.3.md`](docs/release-v1.3.md)。
+| 功能 | 说明 |
+| --- | --- |
+| 电量与状态 | 查看耳机电量、连接状态及设备返回的信息；托盘显示电量，关闭窗口后仍可驻留 |
+| 降噪与环境音 | 切换降噪、环境音、正常模式；可用参数取决于耳机能力 |
+| 均衡器 | 设备预设、自定义参数及本地预设管理；包含 WH-1000XM6 的十段均衡器实现 |
+| 音频与电源 | 按设备能力提供 DSEE、智能免摘、自动关闭电源和关机控制 |
+| 设备与多点 | 选择目标耳机，查看与操作设备支持的多点连接功能 |
+| 个性化 | 深浅主题、多语言、开机启动和托盘快捷控制 |
+| 开发与自动化 | 使用 CLI、后台服务和分层 C++ 库；模拟传输可在无耳机时运行测试 |
 
-目前主要工作集中在以下内容：
+功能会受型号、固件和系统影响。界面中的未知、未支持或等待响应状态应按实际含义理解；协议已实现不等于所有设备都可用。
 
-- 索尼耳机蓝牙通信的帧解析和校验
-- 第一代和第二代协议中部分命令的读取与写入
-- 电量、降噪、均衡器等状态的统一表示
-- 多点连接相关命令的协议实现
-- 桌面程序、命令行工具和后台服务之间的基本协作
+## 界面预览
 
-协议测试和模拟测试可以在没有耳机的情况下运行，但这只能验证代码逻辑，不能证明某个型号在真实环境中可用。真实设备支持情况请以 `docs/device-matrix.md` 和实际测试记录为准。
+| 降噪控制 | 均衡器 |
+| --- | --- |
+| ![降噪与环境音页面，模拟数据](docs/screenshots/v2.0.6/noise-control.png) | ![WH-1000XM6 十段均衡器页面，模拟数据](docs/screenshots/v2.0.6/equalizer.png) |
 
-## 设备支持
+| 音频与设备功能 | 设置 |
+| --- | --- |
+| ![音频功能和电源管理页面，模拟数据](docs/screenshots/v2.0.6/audio-features.png) | ![主题、多语言与启动设置，隔离的演示配置](docs/screenshots/v2.0.6/settings.png) |
 
-项目没有承诺完整的型号支持。设备是否可用取决于型号、固件、蓝牙适配器和操作系统。
+截图来源与重新生成方法见 [截图说明](docs/screenshots/README.md)。
 
-当前仓库中有针对部分 WH 系列设备的测试和记录；其他设备可能只能完成发现、连接或部分状态读取。遇到未验证的设备时，请先使用只读命令，并记录型号、固件版本、操作系统和失败步骤。
+## 下载与开始使用
 
-## 编译环境
+1. 打开 [2.0.6-dev Release](https://github.com/BEFUN-1/Sound-Connect-Center/releases/tag/v2.0.6-dev)，下载 `SonyDeviceCenter-Qt2-2.0.6-dev-Setup.exe`。
+2. 在 Windows 蓝牙设置中先配对并连接耳机。升级前从托盘菜单退出旧版程序。
+3. 以普通用户身份运行安装器。安装器使用固定的当前用户目录，不需要管理员权限，不接受自定义 `/D` 安装位置。
+4. 启动 Sony Device Center，在“设备与多点”页面选择耳机。之后保存目标耳机，不会因为目标不可用就自动连接另一副。
+5. 关闭窗口会收起到托盘；完全退出请使用托盘菜单。
 
-常用依赖如下：
-
-- C++20 编译器
-- CMake
-- Qt 6（桌面程序需要）
-- Catch2 3（运行测试时使用）
-- 对应系统的蓝牙开发库
-
-项目包含 ImGui 子模块。首次获取代码后执行：
-
-```bash
-git submodule update --init --recursive
-```
-
-### Linux
-
-在 Ubuntu 或 Debian 上可以先安装基础依赖：
-
-```bash
-sudo apt update
-sudo apt install -y build-essential cmake git \
-  libbluetooth-dev libdbus-1-dev qt6-base-dev \
-  qt6-declarative-dev qml6-module-qtquick-controls
-```
-
-配置、编译并运行测试：
-
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
-cmake --build build --parallel
-ctest --test-dir build --output-on-failure
-```
-
-### macOS
-
-请安装 Xcode 命令行工具、CMake 和 Qt 6，然后执行：
-
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
-  -DBUILD_TESTING=ON \
-  -DCMAKE_PREFIX_PATH="$(brew --prefix qt@6)"
-cmake --build build --parallel
-ctest --test-dir build --output-on-failure
-```
-
-### Windows
-
-使用 Visual Studio 2022 开发者命令提示符或 PowerShell，并准备 Qt 6 和 CMake：
+安装包已包含 Qt 与编译器运行库，无需另装 Qt 或 .NET。包未进行 Authenticode 签名；请核对发布页的文件名、预发布标识和 SHA-256，不要为运行本项目关闭系统安全保护。
 
 ```powershell
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release `
-  -DCMAKE_PREFIX_PATH="C:\Qt\6.x.x\msvc2022_64"
-cmake --build build --config Release --parallel
-ctest --test-dir build -C Release --output-on-failure
+Get-FileHash .\SonyDeviceCenter-Qt2-2.0.6-dev-Setup.exe -Algorithm SHA256
 ```
 
-Windows 桌面封装的脚本位于 `desktop-app/`，安装器脚本位于 `packaging/windows/`。生成的运行时文件和安装包不属于源代码，默认不会提交到 Git。
+本次指定安装包的 SHA-256：
 
-## 运行方式
+```text
+3bec4c740a809c213fde22e50bce2365e35687310a10ee88e287aaece976973a
+```
 
-构建完成后，具体目标名称取决于平台和 CMake 配置。常见目标如下：
+详细步骤和常见问题见 [使用指南](docs/getting-started.md)。本次 Release 仅提供 Windows 安装包；Linux 与 macOS 保留源码和打包支持，当前版本仍需对应平台验收。
 
-- `sony-device-center`：桌面程序
-- `sonyctl`：命令行工具
-- `sonyd`：后台服务
+## 2.0.6 更新与验证范围
 
-可以先查看帮助：
+2.0.6 重点修复 Windows 连接跟随与状态同步：
+
+- Windows 未连接耳机或连接状态未知时，自动恢复不会主动建立控制连接。
+- 同一耳机重新连接 Windows 后，程序可跟随恢复控制；手动断开在当前系统连接未变化时保持暂停。
+- 修复启动时误记永久暂停、旧暂停记录迁移，以及地址大小写导致页面连接状态不更新的问题。
+- 沿用 2.0.5 的电量同步、后台线程、图片与 Qt 载荷优化。
+
+交付时记录：CTest 202 项注册，201 项通过、1 项 Windows 不支持的 Unix socket 检查跳过；Qt 控制器 27 项通过，页面与托盘生命周期模拟 9 项通过。WH-1000XM6 完成电量读取、9 次模式切换读回、软件断开与恢复、隐藏窗口电量更新等有限真机验证。
+
+真实系统断开／重连、实体按键、完整关机／开机、手机通话与多点音频切换，以及干净 Windows 虚拟机安装／升级／卸载尚未完成本轮完整验收。2.0.5 的两小时资源记录不作为 2.0.6 的新测试结果。
+
+查看 [发布说明](docs/releases/v2.0.6-dev.md)、[2.0.6 验收记录](docs/acceptance-2.0.6-2026-11-02.md) 和 [设备验证矩阵](docs/device-matrix.md)。
+
+## 从源码构建
+
+需要 C++20 编译器、CMake 3.14+、Qt 6（包含 Quick、QML、Quick Controls 2）和系统蓝牙开发依赖。启用测试时，CMake 会查找 Catch2 3，未找到则下载固定版本。
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+  -DSONY_REQUIRE_QT=ON -DCMAKE_PREFIX_PATH=/path/to/Qt
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure --no-tests=error
+```
+
+Windows 多配置生成器请为构建添加 `--config Release`、为 CTest 添加 `-C Release`。Qt 与编译器必须使用匹配的工具链。平台依赖、安装器与签名流程见 [构建和打包说明](packaging/README.md)。
+
+常用程序为 `sony-device-center`、`sonyctl`、`sonyd`。CLI 示例：
 
 ```bash
 sonyctl --help
-sonyd --help
-```
-
-### 模拟模式
-
-`sonyd --simulated` 可用于运行无硬件的模拟测试。模拟模式只用于检查界面、命令流程和状态处理，不代表真实耳机兼容。
-
-### 直接连接
-
-命令行工具支持直接连接模式。使用前应确认没有其他程序或后台服务占用同一副耳机：
-
-```bash
 sonyctl --direct devices
-sonyctl --direct info
+sonyctl --direct --device AA:BB:CC:DD:EE:FF info
+sonyd --simulated
 ```
 
-涉及写入设备的命令请谨慎使用。对于未验证的型号，建议先执行查询命令，不要直接发送控制命令。
+示例地址是占位符。直接连接前先退出占用同一耳机的程序；Windows 暂不支持 Unix socket IPC，桌面程序使用直接连接，CLI 使用 `--direct`。
 
-## 测试
+## 项目结构与文档
 
-测试主要覆盖以下内容：
+| 路径 | 内容 |
+| --- | --- |
+| `apps/device-center/` | Qt 桌面界面与控制器 |
+| `apps/sonyctl/`、`apps/sonyd/` | 命令行与后台服务 |
+| `libs/sony-transport/` | 蓝牙传输、发现与模拟实现 |
+| `libs/sony-protocol/` | 帧编码、协议与设备能力 |
+| `libs/sony-core/` | 设备服务、状态、恢复策略与 IPC |
+| `tests/` | 协议、核心、界面和打包检查 |
+| `docs/`、`packaging/` | 使用说明、验证记录与平台打包 |
 
-- 帧编码、转义、校验和错误处理
-- 协议第一代和第二代的部分命令布局
-- 模拟传输、超时和断开重连
-- 设备状态和命令行协议
-- 部分多点连接命令
+更多内容：[架构](docs/architecture-current.md) · [连接与 IPC](docs/ipc-and-lifecycle.md) · [已知问题](docs/technical-debt.md) · [贡献指南](CONTRIBUTING.md) · [完整文档](docs/README.md)。
 
-运行全部已配置测试：
+报告问题时请提供型号、可查询到的固件、Windows／系统版本、操作步骤与错误信息。提交截图和日志前，请移除真实蓝牙地址、电脑与手机名称、用户名、本地路径和凭据。
 
-```bash
-ctest --test-dir build --output-on-failure
-```
+## 声明与许可证
 
-测试通过只说明对应测试场景通过，不等同于真实设备验证。Windows 的部分进程间通信测试可能因平台条件跳过。
+本项目与 Sony 没有隶属、授权或合作关系，使用逆向分析的协议进行互操作性研究。Sony 及相关产品名称归其各自所有者所有。
 
-## 资料
-
-- `docs/device-matrix.md`：设备和功能验证情况
-- `docs/architecture-current.md`：当前代码结构说明
-- `docs/ipc-and-lifecycle.md`：后台服务和客户端通信说明
-- `docs/reverse-engineering/`：协议分析记录
-- `docs/windows-xm6-validation-2026-10-19.md`：Windows 实机验证记录
-- `docs/release-v1.3.md`：1.3 版本发布说明与电话切换故障验证记录
-
-欢迎提交问题和测试记录。报告设备问题时，请尽量附上型号、固件版本、操作系统、蓝牙适配器、使用的命令以及完整错误信息。
-
-## 声明
-
-本项目与索尼公司没有隶属、授权或合作关系。Sony 及相关产品名称归其各自所有者所有。本项目用于学习、研究和互操作性测试，使用者应自行承担使用风险。
-
-## 许可证
-
-本项目使用 MIT 许可证，详见 [LICENSE](LICENSE)。
+使用 [MIT 许可证](LICENSE)；第三方组件保留各自的许可。

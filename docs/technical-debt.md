@@ -1,10 +1,9 @@
 # Remaining technical debt
 
-Recorded after implementing IPC hardening, connection recovery, and the Qt worker
-and structured-state interface. These items are intentionally left for follow-up;
-the 1.3 release includes automated validation for the Windows control-session
-recovery fix, while hardware coverage remains limited to the records referenced
-below.
+Updated 2026-11-02 for the Qt 2.0.6 development preview. Current validation and
+production release blockers are recorded in `acceptance-2.0.6-2026-11-02.md` and
+`release-preparation.md`. Historical hardware observations below do not replace
+acceptance of the current version.
 
 ## Highest priority
 
@@ -17,36 +16,39 @@ below.
    that a talking session closes after ~30s. The timeout picker is still a
    nice-to-have (see UI section).
    WH-1000XM6 10-band EQ is implemented, with packet fixtures and community
-   hardware verification on firmware 3.1.5. XM6 noise-control readback,
-   intermittent battery readings, and MDR-1000X connectivity remain unresolved.
+   hardware verification on firmware 3.1.5. Limited 2.0.6 XM6 checks confirmed
+   noise-control readback and battery refresh, including a hidden window.
+   Broader firmware coverage and intermittent failure investigation remain
+   open, as does MDR-1000X connectivity.
    ACK receipt still cannot establish that an EQ change had an audible effect.
 2. **Sanitizer validation.** The local ASan build cannot link because
    `/usr/lib64/libasan.so.8.0.0` is missing. Re-run ASan/UBSan in CI or after fixing
    the local compiler runtime. Normal builds and regression tests are separate
    evidence; they do not replace sanitizer coverage.
-3. **Native platform checks.** Linux build, Qt worker tests, and the offscreen
-   simulated daemon/CLI/QML smoke test pass. Windows/macOS builds and physical
-   Bluetooth have not been run locally. CI now installs/requires Qt on Windows.
+3. **Native platform checks.** Historical Linux tests and current Windows
+   Qt/MinGW builds and simulated tests have passed. Limited XM6 hardware
+   observations are recorded in the versioned validation documents. macOS and
+   current Linux changes still require CI/native acceptance.
    Windows IPC is still unsupported; socket tests explicitly skip it.
 4. **Bluetooth ownership across endpoints/processes (#29).** `--direct` refuses a
    daemon at its configured endpoint. Two different custom endpoints, a direct GUI
    already running when sonyd starts, or third-party software can still compete
    for RFCOMM. Add a per-device process lock or an ownership broker before claiming
    global exclusion.
-5. **Pairing / connecting-mode window (XM4 hardware).** Powering the headset off
-   and holding the power button to enter pairing/connecting mode loses the race
-   to `DeviceService` auto-reconnect. Retries start at 1s and keep grabbing
-   RFCOMM, so the cans never stay in that mode unless `sonyd` is killed first.
-   Reported while testing Speak-to-Chat on a WH-1000XM4. Needs a pause-on-power-off
-   or an explicit pairing-mode hold-off, not a tighter backoff.
+5. **Pairing / connecting-mode window on legacy owners (XM4 hardware).** The
+   Windows GUI now persists a pause after manual/system/unknown disconnects
+   and requires a positive OS link for automatic recovery. Other platforms and
+   daemon/CLI owners retain their existing policy. Re-test their pairing-mode
+   hold-off before claiming the Windows GUI fix applies to every owner.
 
 ## Service and IPC follow-up
 
-- **Long device calls still delay queued operations.** Socket polling is independent,
-  but discovery, connect, and maintenance share one serialized executor. A slow
-  connection or inquiry delays subsequent status snapshots and writes. Publish a
-  separate immutable service-status cache and make native connection attempts
-  cancellable. Shutdown currently waits for the active native operation to return.
+- **Serial operation budgets.** The GUI uses a persistent Qt I/O thread and a
+  responsive coordinator, with immutable notification snapshots and cancellable
+  Windows socket waits. The protocol remains serial: a pending wire response can
+  delay the next command or battery query until its existing budget expires.
+  Daemon/CLI and other native connectors still need equivalent cancellation and
+  status-publication validation.
 - **SDK concurrency contract.** Applications serialize access, but the service still
   exposes `activeDevice()` as a raw pointer and uses a coarse recursive mutex. Move
   callers to typed service operations and immutable complete snapshots before
@@ -67,10 +69,11 @@ below.
 - **Discovery metadata.** The Linux and macOS connectors list paired and connected
   devices and set the paired/connected hints. On macOS, `connected` comes from
   `[isConnected]`, which is NO for headsets that connect only for audio or BLE. The
-  Windows connector lists only connected devices and leaves the hints unknown. `SonyDeviceDiscovery`
-  keeps a device only when its address prefix (OUI) or its name identifies Sony.
-  A renamed device with an address outside the OUI table disappears. Run
-  `update_sony_ouis.py` to update the table. Bound the D-Bus calls, and read the
+  Windows connector exposes paired/connected hints. `SonyDeviceDiscovery`
+  requires a valid address and headphone model name; an OUI alone is not
+  sufficient. A renamed device without a recognized name may disappear.
+  Automatic connection still requires an explicitly selected address.
+  Bound the D-Bus calls, and read the
   repeated properties in one snapshot.
 - **Notification/polling efficiency.** Direct sessions consume notifications;
   daemon clients poll cached snapshots once per second. Add IPC subscriptions only
@@ -94,18 +97,21 @@ below.
 - Improve per-feature unknown/stale/error presentation beyond the current metadata,
   battery/noise/codec labels, feature descriptions, and error footer. Show separate
   left/right/case batteries and richer read-error details where useful.
-- Device actions currently allow one pending operation at a time. Coalesce slider
-  drags to the final desired value rather than dropping intermediate actions while
-  busy. Keep confirmed state separate from pending input.
+- The GUI queues up to 32 pending operations, coalesces adjacent unsent slider
+  values, and preserves confirmed state separately. Expand real-device coverage
+  for rapid interactions on multiple controls and delayed notifications.
 - Wire controller error dismissal into the UI and improve lifecycle translations;
   new diagnostic/pending strings currently use English.
 - Core JSON uses a vendored, pinned nlohmann/json v3.12.0 header. Document/update its
   provenance when upgrading and add an installation/export rule if SDK distribution
   is introduced. No new package-manager dependency is required for current builds.
-- Keep the 1.3 fix and its validation record in a reviewable commit. The code and
-  release artifacts are published from the `v1.3` tag; future changes should keep
-  release notes and hashes next to the corresponding validation record.
-- Release signing/attestation (#7; the macOS DMG has the hooks, see packaging/README.md), Main.qml extraction
+- Release source remains uncommitted. Review the Qt migration and 2.0.5 fixes,
+  commit them, and build a new tagged release instead of uploading old local
+  2.0.0–2.0.3 packages. Production builds now reject dirty/tag-mismatched source.
+- Windows Authenticode signing is wired and required for production packages,
+  but no certificate has been supplied or signing run locally. Configure the
+  secrets and timestamp endpoint documented in `packaging/README.md`.
+- Release attestation (#7; macOS signing has hooks, see packaging/README.md), Main.qml extraction
   (#21), AUR packaging (#22), and cosmetic work remain deferred.
 
 ## Local test instructions
@@ -118,11 +124,12 @@ ctest --test-dir build --output-on-failure
 ```
 
 For a real-device test, stop the installed daemon first to avoid mixing versions,
-then start the freshly built daemon and GUI in separate terminals:
+then start the freshly built daemon and GUI in separate terminals. Replace the
+example address with the explicitly selected headset's paired Bluetooth address:
 
 ```sh
 systemctl --user stop sonyd.service
-./build/apps/sonyd/sonyd -v
+./build/apps/sonyd/sonyd -v --device AA:BB:CC:DD:EE:FF
 ```
 
 ```sh
@@ -132,5 +139,5 @@ systemctl --user stop sonyd.service
 
 Start with headphones off, turn them on, then test power cycling and the physical
 NC/ambient button. Check that failures are visible and the UI stays responsive.
-For hardware-free testing use `sonyd --simulated` instead of `sonyd -v`.
+For hardware-free testing use `sonyd --simulated` instead of the real-device command.
 The socket path now requires a private directory; the default handles this.

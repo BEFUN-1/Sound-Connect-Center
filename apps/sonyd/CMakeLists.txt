@@ -7,5 +7,7 @@ add_executable(sonyd
 
 target_compile_features(sonyd PRIVATE cxx_std_20)
 target_link_libraries(sonyd PRIVATE sony-core sony-protocol sony-transport Threads::Threads)
+sony_deploy_mingw_runtime(sonyd)
+sony_windows_version(sonyd)
 
 install(TARGETS sonyd RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

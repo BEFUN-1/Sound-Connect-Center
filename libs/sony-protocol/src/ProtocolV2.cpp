@@ -20,24 +20,34 @@ constexpr std::array MultipointBusyRetryDelays{
     std::chrono::milliseconds(2000),
 };
 
-// Auto-power-off codes: 0=Off, 1=5min, 2=30min, 3=1h, 4=3h, 5=when-taken-off
+// UI indexes stay stable across generations. The wearing table additionally
+// exposes "when removed" at 5, with its 15-minute timer at 6.
 const std::pair<uint8_t, uint8_t> APO_CODES[] = {
-    { 0x11, 0x00 }, { 0x00, 0x00 }, { 0x01, 0x01 }, { 0x02, 0x02 }, { 0x03, 0x03 }, { 0x10, 0x00 }
+    { 0x11, 0x00 }, { 0x00, 0x00 }, { 0x01, 0x01 }, { 0x02, 0x02 }, { 0x03, 0x03 }, { 0x10, 0x00 }, { 0x04, 0x04 }
+};
+const std::pair<uint8_t, uint8_t> APO_CODES_NO_WEARING[] = {
+    { 0x11, 0x00 }, { 0x00, 0x00 }, { 0x01, 0x00 }, { 0x02, 0x00 }, { 0x03, 0x00 }, { 0x04, 0x00 }
 };
 
-int apoIndexFromCode(uint8_t c0, uint8_t c1) {
-    for (int i = 0; i < 6; i++) {
-        if (APO_CODES[i].first == c0 && APO_CODES[i].second == c1) {
+int apoIndexFromCode(uint8_t code, bool wearingDetection) {
+    const auto* codes = wearingDetection ? APO_CODES : APO_CODES_NO_WEARING;
+    for (int i = 0; i < (wearingDetection ? 7 : 6); i++) {
+        if (codes[i].first == code) {
             return i;
         }
     }
-    return 0;
+    throw SonyException(SonyErrorCode::InvalidResponse, "Unknown auto-power-off mode");
 }
 
 } // namespace
 
-ProtocolV2::ProtocolV2(SonyProtocolSession& session, bool tenBandEqualizer)
-    : _session(session), _tenBandEqualizer(tenBandEqualizer) {}
+ProtocolV2::ProtocolV2(SonyProtocolSession& session, bool tenBandEqualizer, bool wearingDetection)
+    : _session(session), _tenBandEqualizer(tenBandEqualizer), _wearingDetection(wearingDetection) {
+    // WH-1000XM6 uses the adaptive type 0x19. Keep this deterministic even
+    // when its optional function-discovery response is unavailable.
+    if (_tenBandEqualizer)
+        _noiseType = 0x19;
+}
 
 void ProtocolV2::initDevice() {
     // V2 handshake init: 0x00 0x00 -> RET 0x01
@@ -281,31 +291,58 @@ std::string ProtocolV2::getCodec() {
 }
 
 int ProtocolV2::getAutoPowerOff() {
-    // GET: 26 05 -> RET: 27 05 <c0> <c1>
+    // GET: 26 <type> -> RET: 27 <type> <current> <last-selected>
+    const auto type = static_cast<uint8_t>(_wearingDetection ? 0x05 : 0x04);
     auto resp = _session.sendAndAwaitResponse(
-        SonyFrame{ .type = DataType::DataMdr, .payload = {0x26, 0x05} },
+        SonyFrame{ .type = DataType::DataMdr, .payload = {0x26, type} },
         0x27,
-        -1,
+        type,
         std::chrono::milliseconds(1000)
     );
-    if (resp.payload.size() >= 4) {
-        return apoIndexFromCode(resp.payload[2], resp.payload[3]);
+    if (resp.payload.size() == 4) {
+        const int index = apoIndexFromCode(resp.payload[2], _wearingDetection);
+        // Byte 3 remembers a separately selected duration even when the
+        // current mode is disabled or wearing detection.
+        apoIndexFromCode(resp.payload[3], _wearingDetection);
+        if (resp.payload[3] <= 4) _autoPowerOffTimer = resp.payload[3];
+        return index;
     }
     throw SonyException(SonyErrorCode::InvalidResponse, "Incomplete AutoPowerOff response");
 }
 
 void ProtocolV2::setAutoPowerOff(int index) {
-    if (index < 0 || index >= 6) {
-        return;
+    if (index < 0 || index >= (_wearingDetection ? 7 : 6)) {
+        throw SonyException(SonyErrorCode::InvalidResponse, "Invalid auto-power-off index");
     }
-    // SET: 28 05 <c0> <c1>
+    // SET: 28 <type> <c0> <c1>
+    const auto* codes = _wearingDetection ? APO_CODES : APO_CODES_NO_WEARING;
+    const auto type = static_cast<uint8_t>(_wearingDetection ? 0x05 : 0x04);
     std::vector<uint8_t> payload = {
         0x28,
-        0x05,
-        APO_CODES[index].first,
-        APO_CODES[index].second
+        type,
+        codes[index].first,
+        static_cast<uint8_t>(_wearingDetection && (index == 0 || index == 5)
+            ? _autoPowerOffTimer : codes[index].second)
     };
     _session.send(SonyFrame{ .type = DataType::DataMdr, .payload = std::move(payload) });
+}
+
+std::vector<int> ProtocolV2::getAutoPowerOffOptions() {
+    if (_autoPowerOffOptions) return *_autoPowerOffOptions;
+    const auto type = static_cast<uint8_t>(_wearingDetection ? 0x05 : 0x04);
+    const auto response = _session.sendAndAwaitResponse(
+        SonyFrame{.type = DataType::DataMdr, .payload = {0x20, type}},
+        0x21, type, std::chrono::milliseconds(1000));
+    const auto& p = response.payload;
+    if (p.size() < 4 || p.size() != static_cast<size_t>(p[2]) + 3)
+        throw SonyException(SonyErrorCode::InvalidResponse, "Malformed auto-power-off capability");
+    std::vector<int> options;
+    for (size_t i = 3; i < p.size(); ++i)
+        options.push_back(apoIndexFromCode(p[i], _wearingDetection));
+    std::sort(options.begin(), options.end());
+    options.erase(std::unique(options.begin(), options.end()), options.end());
+    _autoPowerOffOptions = options;
+    return options;
 }
 
 bool ProtocolV2::getSpeakToChat() {
@@ -402,9 +439,15 @@ MultipointState ProtocolV2::getMultipoint() {
     }
     return _multipoint;
 }
+MultipointState ProtocolV2::takeMultipointPreflight() {
+    if (!_multipointPreflight) return getMultipoint();
+    auto state = std::move(*_multipointPreflight);
+    _multipointPreflight.reset();
+    return state;
+}
 void ProtocolV2::switchMultipointSource(std::string_view input) {
     const auto target = multipoint::address(input);
-    const auto state = getMultipoint();
+    const auto state = takeMultipointPreflight();
     if (!state.sourceSwitchSupported) throw SonyException(SonyErrorCode::Unsupported, "Headset does not support playback source switching");
     if (std::none_of(state.devices.begin(), state.devices.end(), [&](const auto& d) { return d.address == target && d.connected; }))
         throw std::invalid_argument("Playback source must be connected to the headphones");
@@ -423,7 +466,7 @@ void ProtocolV2::switchMultipointSource(std::string_view input) {
     }
 }
 void ProtocolV2::setMultipointSourceKeeping(bool enabled) {
-    const auto state = getMultipoint();
+    const auto state = takeMultipointPreflight();
     if (!state.sourceKeepSupported) throw SonyException(SonyErrorCode::Unsupported, "Headset does not support fixed playback source");
     std::lock_guard lock(_mutex);
     const uint8_t value = enabled ? 0 : 1;
@@ -436,7 +479,7 @@ void ProtocolV2::setMultipointSourceKeeping(bool enabled) {
 }
 void ProtocolV2::multipointAction(std::string_view input, uint8_t action) {
     const auto target = multipoint::address(input);
-    const auto state = getMultipoint();
+    const auto state = takeMultipointPreflight();
     if (!state.supported) throw SonyException(SonyErrorCode::Unsupported, "Headset does not support multipoint device management");
     if (std::none_of(state.devices.begin(), state.devices.end(), [&](const auto& d) { return d.address == target; }))
         throw std::invalid_argument("Device is not in the headphones' pairing history");
@@ -447,13 +490,16 @@ void ProtocolV2::multipointAction(std::string_view input, uint8_t action) {
     const uint8_t success = action << 4;
     for (size_t attempt = 0;; ++attempt) {
         const auto result = _session.sendAndAwaitResponse(SonyFrame{.type = DataType::DataMdrNo2, .payload = request},
-            0x3D, type, std::chrono::seconds(12), [target, action](const auto& frame) {
-                return frame.payload.size() == 21 && frame.payload[2] == action &&
-                    std::string(frame.payload.begin() + 4, frame.payload.end()) == target;
+            0x3D, type, std::chrono::seconds(12), [target, action, type](const auto& frame) {
+                if (frame.payload.size() != 21 || frame.payload[2] != action ||
+                    std::string(frame.payload.begin() + 4, frame.payload.end()) != target)
+                    return false;
+                const uint8_t inProgress = static_cast<uint8_t>((action << 4) + 2);
+                return type == 2 || frame.payload[3] != inProgress;
             });
         const auto resultCode = result.payload[3];
         if (resultCode == success) return;
-        if (resultCode == success + 2 && (action == 0 || action == 1)) return;
+        if (resultCode == success + 2 && type == 2 && (action == 0 || action == 1)) return;
         if (resultCode != success + 3 || attempt == MultipointBusyRetryDelays.size())
             throw SonyException(SonyErrorCode::ProtocolViolation,
                 resultCode == success + 3
@@ -462,7 +508,7 @@ void ProtocolV2::multipointAction(std::string_view input, uint8_t action) {
 
         // Busy is an explicit rejection, so retrying this same desired-state
         // operation is safe after the headset has had time to finish its work.
-        std::this_thread::sleep_for(MultipointBusyRetryDelays[attempt]);
+        _session.waitForRetry(MultipointBusyRetryDelays[attempt]);
     }
 }
 void ProtocolV2::multipointConnect(std::string_view address) { multipointAction(address, 1); }

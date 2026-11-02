@@ -4,10 +4,11 @@ on:
   push:
     tags:
       - 'v*'
+      - '!v*-*'
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   BUILD_TYPE: Release
@@ -19,7 +20,7 @@ jobs:
     name: Tag matches project version
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Compare
         run: |
           tag="${GITHUB_REF_NAME#v}"
@@ -29,13 +30,19 @@ jobs:
             echo "::error::tag v$tag does not match project(VERSION $proj) in CMakeLists.txt"
             exit 1
           fi
+      - name: Verify committed release source
+        shell: bash
+        run: |
+          args=()
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then args+=(--allow-untagged); fi
+          python packaging/verify-release-source.py "${args[@]}"
 
   linux:
     name: Linux packages (DEB, RPM, TGZ)
     needs: check-version
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           submodules: true
 
@@ -47,6 +54,12 @@ jobs:
             libbluetooth-dev libdbus-1-dev \
             libglew-dev libglfw3-dev libgl1-mesa-dev \
             qt6-base-dev qt6-declarative-dev
+      - name: Record source provenance
+        run: |
+          mkdir -p build
+          args=()
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then args+=(--allow-untagged); fi
+          python packaging/verify-release-source.py "${args[@]}" --output build/SOURCE-linux.json
 
       # Packaging builds do not run the suite, so tests are left out of the
       # configure entirely rather than built and skipped.
@@ -62,20 +75,20 @@ jobs:
       - name: Collect
         run: |
           mkdir -p dist
-          cp build/*.deb build/*.rpm build/*.tar.gz dist/
+          cp build/*.deb build/*.rpm build/*.tar.gz build/SOURCE-linux.json dist/
           ls -la dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: linux-packages
           path: dist/
 
   windows:
-    name: Windows installer (MSI, ZIP)
+    name: Windows installer (NSIS, ZIP)
     needs: check-version
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           submodules: true
 
@@ -88,34 +101,24 @@ jobs:
       # `aqt list-qt windows desktop` is the way to check what is actually
       # published before changing this.
       - name: Install Qt
-        uses: jurplel/install-qt-action@v4
+        uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125 # v4.4.1
         with:
           version: '6.10.*'
           arch: 'win64_msvc2022_64'
 
-      # CPack's WIX generator drives candle.exe/light.exe, which only exist in
-      # WiX 3 - WiX 4+ replaced them with a different CLI. Install it if the
-      # runner image does not already carry it.
-      - name: Ensure WiX 3 is available
+      - name: Install NSIS
         shell: pwsh
         run: |
-          function Find-Wix {
-            Get-ChildItem 'C:\Program Files (x86)' -Filter 'WiX Toolset*' -Directory -ErrorAction SilentlyContinue |
-              Sort-Object Name | Select-Object -Last 1
-          }
-          $wix = Find-Wix
-          if (-not $wix) {
-            Write-Host 'WiX 3 not present on the image; installing via chocolatey'
-            choco install wixtoolset --version=3.14.1 -y --no-progress
-            $wix = Find-Wix
-          }
-          if (-not $wix) { throw 'WiX 3 could not be installed' }
-          $bin = Join-Path $wix.FullName 'bin'
-          if (-not (Test-Path (Join-Path $bin 'candle.exe'))) {
-            throw "candle.exe not found under $bin"
-          }
-          Write-Host "Using $bin"
-          $bin | Out-File -FilePath $env:GITHUB_PATH -Append
+          choco install nsis --version=3.11 -y --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'NSIS installation failed' }
+
+      - name: Record source provenance
+        shell: bash
+        run: |
+          mkdir -p build
+          args=()
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then args+=(--allow-untagged); fi
+          python packaging/verify-release-source.py "${args[@]}" --output build/SOURCE-windows.json
 
       - name: Configure
         shell: bash
@@ -127,9 +130,55 @@ jobs:
         shell: bash
         run: cmake --build build --config ${BUILD_TYPE} --parallel
 
+      - name: Import Windows signing certificate
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          SIGNING_PFX_BASE64: ${{ secrets.SONY_WINDOWS_CERTIFICATE_BASE64 }}
+          SIGNING_PFX_PASSWORD: ${{ secrets.SONY_WINDOWS_CERTIFICATE_PASSWORD }}
+          SONY_WINDOWS_TIMESTAMP_SERVER: ${{ vars.SONY_WINDOWS_TIMESTAMP_SERVER }}
+        run: |
+          if (-not $env:SIGNING_PFX_BASE64 -or -not $env:SONY_WINDOWS_TIMESTAMP_SERVER) {
+            throw 'Production Windows releases require a signing certificate and timestamp endpoint.'
+          }
+          $pfxPath = Join-Path $env:RUNNER_TEMP 'sony-windows-signing.pfx'
+          try {
+            [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:SIGNING_PFX_BASE64))
+            $password = ConvertTo-SecureString $env:SIGNING_PFX_PASSWORD -AsPlainText -Force
+            $certificates = @(Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My -Password $password)
+            $signingCertificates = @($certificates | Where-Object HasPrivateKey)
+            if ($signingCertificates.Count -ne 1) { throw 'Expected one signing certificate with a private key' }
+            "SONY_WINDOWS_SIGNING_THUMBPRINT=$($signingCertificates[0].Thumbprint)" >> $env:GITHUB_ENV
+            "SONY_WINDOWS_TIMESTAMP_SERVER=$env:SONY_WINDOWS_TIMESTAMP_SERVER" >> $env:GITHUB_ENV
+          } finally {
+            if (Test-Path -LiteralPath $pfxPath) { Remove-Item -LiteralPath $pfxPath -Force }
+          }
+
       - name: Package
-        shell: bash
-        run: cd build && cpack -C ${BUILD_TYPE} -G "WIX;ZIP"
+        shell: pwsh
+        run: |
+          $options = @{}
+          if ($env:GITHUB_REF_TYPE -ne 'tag') { $options.Development = $true }
+          ./packaging/windows/build-qt-installer.ps1 -BuildDir build `
+            -MakeNsis "${env:ProgramFiles(x86)}\NSIS\makensis.exe" @options
+          cpack --config build/CPackConfig.cmake -B build -C $env:BUILD_TYPE -G ZIP
+          if ($LASTEXITCODE -ne 0) { throw 'CPack ZIP failed' }
+
+      - name: Test installer and release safety
+        shell: pwsh
+        run: |
+          $env:SONY_TEST_INSTALLER = (Get-ChildItem build/artifacts/*.exe | Select-Object -First 1).FullName
+          $env:SONY_TEST_NSIS = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          python -m unittest discover -s tests -p test_release_safety.py -v
+          if ($LASTEXITCODE -ne 0) { throw 'Installer safety tests failed' }
+
+      - name: Remove Windows signing certificate
+        if: always() && github.ref_type == 'tag'
+        shell: pwsh
+        run: |
+          if ($env:SONY_WINDOWS_SIGNING_THUMBPRINT -match '^[A-Fa-f0-9]{40}$') {
+            Remove-Item -LiteralPath "Cert:\CurrentUser\My\$env:SONY_WINDOWS_SIGNING_THUMBPRINT" -Force
+          }
 
       # v0.1.0 shipped an app that could not start because the MSVC runtime
       # was missing. Assert on the produced archive so that fails the build
@@ -156,10 +205,10 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cp build/*.msi build/*.zip dist/
+          cp build/artifacts/*.exe build/*.zip build/SOURCE-windows.json dist/
           ls -la dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: windows-packages
           path: dist/
@@ -173,20 +222,26 @@ jobs:
       # Once enabled, missing credentials or failed trust checks stop release.
       SONY_REQUIRE_NOTARIZATION: ${{ vars.SONY_MACOS_SIGNING_ENABLED == 'true' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           submodules: true
 
       # Same Qt line as Windows, for the same CVE reasons. The macOS archive
       # is universal, so one DMG serves Apple silicon and Intel.
       - name: Install Qt
-        uses: jurplel/install-qt-action@v4
+        uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125 # v4.4.1
         with:
           version: '6.10.*'
           arch: 'clang_64'
 
       - name: Install dmgbuild
         run: pipx install dmgbuild
+      - name: Record source provenance
+        run: |
+          mkdir -p build
+          args=()
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then args+=(--allow-untagged); fi
+          python packaging/verify-release-source.py "${args[@]}" --output build/SOURCE-macos.json
 
       - name: Configure
         run: |
@@ -217,10 +272,10 @@ jobs:
       - name: Collect
         run: |
           mkdir -p dist
-          cp build/*.dmg dist/
+          cp build/*.dmg build/SOURCE-macos.json dist/
           ls -la dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: macos-packages
           path: dist/
@@ -240,10 +295,12 @@ jobs:
     # A manual run builds everything and stops here; only a tag publishes.
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: artifacts
 
@@ -252,6 +309,13 @@ jobs:
           mkdir -p dist
           find artifacts -type f -exec cp {} dist/ \;
           ls -la dist
+
+      - name: Generate artifact checksums
+        run: |
+          cd dist
+          sha256sum -- * > ../SHA256SUMS
+          mv ../SHA256SUMS .
+          cat SHA256SUMS
 
       # --generate-notes on its own produces a bare PR changelog and silently
       # ignores the annotated tag message, so the notes are assembled here:
@@ -266,14 +330,9 @@ jobs:
           cat .github/release-notes-header.md generated.md > notes.md
           cat notes.md
 
-      - name: Create or update the release
+      - name: Create immutable release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/* --clobber
-            gh release edit "$TAG" --notes-file notes.md
-          else
-            gh release create "$TAG" dist/* --title "$TAG" --notes-file notes.md
-          fi
+          gh release create "$TAG" dist/* --verify-tag --title "$TAG" --notes-file notes.md

@@ -38,7 +38,7 @@ void printHelp() {
               << "  eq custom <cb> <b1..b5>    Apply custom Clear Bass (-10..10) and 5 EQ bands\n"
               << "  eq <preset>                Shorthand for eq preset <preset>\n"
               << "  dsee on|off|auto           Toggle DSEE sound enhancement\n"
-              << "  apo <0-5>                  Set Auto-Power-Off duration preset index\n"
+              << "  apo <0-6>                  Set an advertised Auto-Power-Off preset index\n"
               << "  poweroff                  Power off the connected headphones immediately\n"
               << "  status                     Display connection status\n\n"
               << "  dashboard                  JSON headset status and internal multipoint devices\n"
@@ -150,6 +150,10 @@ int main(int argc, char* argv[]) {
     auto cmd = IpcProtocol::parseCommand(commandLine);
     if (cmd.type != IpcCommandType::Devices) {
         auto devs = service.discoverDevices();
+        if (selectedAddress.empty() && devs.size() > 1) {
+            std::cerr << "Error: multiple headphones found; select one with --device <address>\n";
+            return 1;
+        }
         if (!devs.empty()) {
             try {
                 const auto it = selectedAddress.empty()

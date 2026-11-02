@@ -52,6 +52,9 @@ public:
     void refreshDsee();
     void refreshMultipoint();
     void refreshSettingsStep();
+    void beforeRequest(std::function<void()> callback) {
+        if (_session) _session->beforeRequest(std::move(callback));
+    }
 
     // Control operations
     void setNoiseControl(const protocol::NoiseControlState& nc);
@@ -69,12 +72,16 @@ public:
     void multipointConnect(std::string_view address);
     void multipointDisconnect(std::string_view address);
     void multipointUnpair(std::string_view address);
+    void performMultipoint(std::string_view action, std::string_view address = {},
+                           bool enabled = false, bool closesControlSession = false);
 
 private:
     unsigned _refreshStep{0};
     void _markSuccess(const std::string& feature);
     void _markError(const std::string& feature, const SonyException& ex);
+    void _confirmSetting(const std::string& feature, const std::function<void()>& operation);
     void _setupSession();
+    void _readAutoPowerOff();
     void _onNotification(const protocol::SonyFrame& frame);
 
     std::shared_ptr<transport::ITransport> _transport;
