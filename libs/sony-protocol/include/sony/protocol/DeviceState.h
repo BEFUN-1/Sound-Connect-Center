@@ -16,6 +16,8 @@ inline int64_t stateTimestamp() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 }
 struct DeviceState {
+    uint64_t sessionId{0};
+    uint64_t revision{0};
     std::map<std::string, FeatureStatus> features;
     BatteryState battery;
     NoiseControlState noiseControl;
@@ -28,6 +30,7 @@ struct DeviceState {
     std::string codec;
 
     int autoPowerOff{0};
+    std::vector<int> autoPowerOffOptions;
     bool speakToChat{false};
     bool adaptiveVolume{false};
 };

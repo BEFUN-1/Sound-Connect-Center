@@ -1,4 +1,14 @@
 #include "WindowsBluetoothConnector.h"
+#include <algorithm>
+#include <climits>
+
+namespace {
+template<class Handle, auto Close>
+struct ScopedBluetoothHandle {
+	Handle value;
+	~ScopedBluetoothHandle() { if (value) Close(value); }
+};
+}
 
 void WSAStartupWrapper()
 {
@@ -12,12 +22,11 @@ void WSAStartupWrapper()
 
 WindowsBluetoothConnector::WindowsBluetoothConnector()
 {
-	static bool startedUp = false;
-	if (!startedUp)
-	{
+	static const bool startedUp = [] {
 		::WSAStartupWrapper();
-		startedUp = true;
-	}
+		return true;
+	}();
+	(void)startedUp;
 }
 
 bool WindowsBluetoothConnector::_tryConnect(const char* uuid, SOCKADDR_BTH& sab)
@@ -27,11 +36,28 @@ bool WindowsBluetoothConnector::_tryConnect(const char* uuid, SOCKADDR_BTH& sab)
 	{
 		throw std::runtime_error("Couldn't create GUID: " + std::to_string(errCode));
 	}
-	return ::connect(this->_socket, (sockaddr*)&sab, sizeof(sab)) == 0;
+	if (_cancelled) throw RecoverableException("Connection cancelled", true);
+	if (::connect(_socket.load(), (sockaddr*)&sab, sizeof(sab)) == 0) return true;
+	if (WSAGetLastError() != WSAEWOULDBLOCK) return false;
+	try {
+		// Let Windows determine its normal connection timeout; cancellation is
+		// checked every 100 ms instead of blocking inside connect().
+		_wait(false, std::chrono::steady_clock::time_point::max());
+		int error = 0;
+		int size = sizeof(error);
+		if (::getsockopt(_socket.load(), SOL_SOCKET, SO_ERROR,
+			reinterpret_cast<char*>(&error), &size) != 0) return false;
+		WSASetLastError(error);
+		return error == 0;
+	} catch (...) {
+		if (_cancelled) throw;
+		return false;
+	}
 }
 
 void WindowsBluetoothConnector::connect(const std::string& addrStr)
 {
+	_cancelled = false;
 	if (this->_socket == INVALID_SOCKET)
 	{
 		this->_initSocket();
@@ -50,8 +76,11 @@ void WindowsBluetoothConnector::connect(const std::string& addrStr)
 	}
 
 	// A failed connect() can leave the socket unusable - recreate it before trying the v2 UUID.
-	::closesocket(this->_socket);
-	this->_socket = INVALID_SOCKET;
+	{
+		std::lock_guard lock(_socketMutex);
+		::closesocket(_socket.exchange(INVALID_SOCKET));
+	}
+	if (_cancelled) throw RecoverableException("Connection cancelled", true);
 	this->_initSocket();
 
 	if (_tryConnect(SONY_UUID_V2, sab))
@@ -66,15 +95,40 @@ void WindowsBluetoothConnector::connect(const std::string& addrStr)
 
 WindowsBluetoothConnector::~WindowsBluetoothConnector()
 {
-	if (this->_socket != INVALID_SOCKET)
-	{
-		::closesocket(this->_socket);
+	disconnect();
+}
+
+void WindowsBluetoothConnector::_wait(bool readable, std::chrono::steady_clock::time_point deadline)
+{
+	while (!_cancelled) {
+		if (std::chrono::steady_clock::now() >= deadline)
+			throw RecoverableException("Socket wait timed out", false);
+		fd_set ready, errors;
+		FD_ZERO(&ready);
+		FD_ZERO(&errors);
+		const auto socket = _socket.load();
+		if (socket == INVALID_SOCKET) throw RecoverableException("Socket closed", true);
+		FD_SET(socket, &ready);
+		FD_SET(socket, &errors);
+		timeval timeout{0, 100000};
+		const auto result = ::select(0, readable ? &ready : nullptr,
+			readable ? nullptr : &ready, &errors, &timeout);
+		if (result == SOCKET_ERROR) throw RecoverableException("Socket wait failed", true);
+		if (result > 0) return;
 	}
+	throw RecoverableException("Bluetooth operation cancelled", true);
 }
 
 int WindowsBluetoothConnector::send(char* buf, size_t length)
 {
-	auto bytesSent = ::send(this->_socket, buf, length, 0);
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+	int bytesSent;
+	do {
+		if (_cancelled) throw RecoverableException("Send cancelled", true);
+		bytesSent = ::send(_socket.load(), buf, static_cast<int>((std::min)(length, size_t{INT_MAX})), 0);
+		if (bytesSent != SOCKET_ERROR || WSAGetLastError() != WSAEWOULDBLOCK) break;
+		_wait(false, deadline);
+	} while (true);
 	if (bytesSent == SOCKET_ERROR)
 	{
 		throw RecoverableException("Couldn't send (" + std::to_string(WSAGetLastError()) + ")", true);
@@ -84,7 +138,14 @@ int WindowsBluetoothConnector::send(char* buf, size_t length)
 
 int WindowsBluetoothConnector::recv(char* buf, size_t length)
 {
-	auto bytesReceived = ::recv(this->_socket, buf, length, 0);
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(2500);
+	int bytesReceived;
+	do {
+		if (_cancelled) throw RecoverableException("Receive cancelled", true);
+		bytesReceived = ::recv(_socket.load(), buf, static_cast<int>((std::min)(length, size_t{INT_MAX})), 0);
+		if (bytesReceived != SOCKET_ERROR || WSAGetLastError() != WSAEWOULDBLOCK) break;
+		_wait(true, deadline);
+	} while (true);
 	if (bytesReceived == SOCKET_ERROR)
 	{
 		int err = WSAGetLastError();
@@ -128,36 +189,54 @@ std::vector<BluetoothDevice> WindowsBluetoothConnector::getConnectedDevices()
 			throw std::runtime_error("BluetoothFindFirstRadio() failed with error code " + std::to_string(GetLastError()));
 		}
 	}
+	ScopedBluetoothHandle<HBLUETOOTH_RADIO_FIND, BluetoothFindRadioClose> search{radioFindHandle};
 
 	do {
+		ScopedBluetoothHandle<HANDLE, CloseHandle> radioOwner{radio};
 		dev_search_params.hRadio = radio;
 		devsInRadio = _findDevicesInRadio(&dev_search_params);
 		res.insert(res.end(), devsInRadio.begin(), devsInRadio.end());
 	} while (BluetoothFindNextRadio(radioFindHandle, &radio));
 
-	// No more radio, close the radio handle
-	if (!BluetoothFindRadioClose(radioFindHandle))
-		throw std::runtime_error("BluetoothFindRadioClose(bt) failed with error code " + std::to_string(GetLastError()));
-
 	return res;
+}
+
+std::vector<std::string> WindowsBluetoothConnector::getLocalAddresses()
+{
+	std::vector<std::string> addresses;
+	BLUETOOTH_FIND_RADIO_PARAMS params{sizeof(params)};
+	HANDLE radio = nullptr;
+	const auto find = BluetoothFindFirstRadio(&params, &radio);
+	if (!find) return addresses;
+	ScopedBluetoothHandle<HBLUETOOTH_RADIO_FIND, BluetoothFindRadioClose> search{find};
+	do {
+		ScopedBluetoothHandle<HANDLE, CloseHandle> owner{radio};
+		BLUETOOTH_RADIO_INFO info{sizeof(info)};
+		if (BluetoothGetRadioInfo(radio, &info) == ERROR_SUCCESS)
+			addresses.push_back(MACBytesToString(info.address.rgBytes));
+	} while (BluetoothFindNextRadio(find, &radio));
+	return addresses;
 }
 
 void WindowsBluetoothConnector::disconnect() noexcept
 {
-	if (this->_socket != INVALID_SOCKET)
+	std::lock_guard lock(_socketMutex);
+	const auto socket = _socket.exchange(INVALID_SOCKET);
+	this->_connected = false;
+	if (socket != INVALID_SOCKET)
 	{
-		this->_connected = false;
-		shutdown(this->_socket, SD_BOTH);
-		closesocket(this->_socket);
-		this->_socket = INVALID_SOCKET;
+		shutdown(socket, SD_BOTH);
+		closesocket(socket);
 	}
 }
 
 void WindowsBluetoothConnector::cancelPendingIo() noexcept
 {
+	_cancelled = true;
+	std::lock_guard lock(_socketMutex);
 	if (this->_socket != INVALID_SOCKET)
 	{
-		shutdown(this->_socket, SD_BOTH);
+		shutdown(_socket.load(), SD_BOTH);
 	}
 }
 
@@ -179,24 +258,43 @@ void WindowsBluetoothConnector::_initSocket()
 		throw std::runtime_error("Couldn't create socket: " + std::to_string(WSAGetLastError()));
 	}
 
-	ULONG enable = TRUE;
-	if (::setsockopt(sock, SOL_RFCOMM, SO_BTH_AUTHENTICATE, reinterpret_cast<char*>(&enable), sizeof(enable)))
+	try
 	{
-		throw std::runtime_error("Couldn't set SO_BTH_AUTHENTICATE: " + std::to_string(WSAGetLastError()));
-	}
+		ULONG enable = TRUE;
+		if (::setsockopt(sock, SOL_RFCOMM, SO_BTH_AUTHENTICATE,
+			reinterpret_cast<char*>(&enable), sizeof(enable)))
+		{
+			throw std::runtime_error("Couldn't set SO_BTH_AUTHENTICATE: " + std::to_string(WSAGetLastError()));
+		}
 
-	if (::setsockopt(sock, SOL_RFCOMM, SO_BTH_ENCRYPT, reinterpret_cast<char*>(&enable), sizeof(enable)))
+		if (::setsockopt(sock, SOL_RFCOMM, SO_BTH_ENCRYPT,
+			reinterpret_cast<char*>(&enable), sizeof(enable)))
+		{
+			throw std::runtime_error("Couldn't set SO_BTH_ENCRYPT: " + std::to_string(WSAGetLastError()));
+		}
+
+		// Bound recv so it can't block forever. Capability probing sends a GET and relies on this timeout to
+		// decide a feature is unsupported - without it the app hangs on "Reading device settings" (matches the
+		// 2.5s timeout the macOS connector uses).
+		DWORD recvTimeoutMs = 2500;
+		if (::setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,
+			reinterpret_cast<char*>(&recvTimeoutMs), sizeof(recvTimeoutMs)))
+		{
+			throw std::runtime_error("Couldn't set SO_RCVTIMEO: " + std::to_string(WSAGetLastError()));
+		}
+
+		u_long nonblocking = 1;
+		if (::ioctlsocket(sock, FIONBIO, &nonblocking) != 0)
+			throw std::runtime_error("Couldn't enable nonblocking Bluetooth I/O");
+		std::lock_guard lock(_socketMutex);
+		if (_cancelled) throw RecoverableException("Connection cancelled", true);
+		this->_socket = sock;
+	}
+	catch (...)
 	{
-		throw std::runtime_error("Couldn't set SO_BTH_ENCRYPT: " + std::to_string(WSAGetLastError()));
+		::closesocket(sock);
+		throw;
 	}
-
-	// Bound recv so it can't block forever. Capability probing sends a GET and relies on this timeout to
-	// decide a feature is unsupported - without it the app hangs on "Reading device settings" (matches the
-	// 2.5s timeout the macOS connector uses).
-	DWORD recvTimeoutMs = 2500;
-	::setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<char*>(&recvTimeoutMs), sizeof(recvTimeoutMs));
-
-	this->_socket = sock;
 }
 
 std::string WindowsBluetoothConnector::_wstringToUtf8(const std::wstring& wstr)
@@ -234,6 +332,7 @@ std::vector<BluetoothDevice> WindowsBluetoothConnector::_findDevicesInRadio(BLUE
 			throw std::runtime_error("BluetoothFindFirstDevice() failed with error code: " + std::to_string(GetLastError()));
 		}
 	}
+	ScopedBluetoothHandle<HBLUETOOTH_DEVICE_FIND, BluetoothFindDeviceClose> search{dev_find_handle};
 
 	// Get the device info
 	do {
@@ -244,10 +343,6 @@ std::vector<BluetoothDevice> WindowsBluetoothConnector::_findDevicesInRadio(BLUE
 			device_info.fConnected
 		});
 	} while (BluetoothFindNextDevice(dev_find_handle, &device_info));
-
-	// NO more device, close the device handle
-	if (!BluetoothFindDeviceClose(dev_find_handle))
-		throw std::runtime_error("BluetoothFindDeviceClose(bt_dev) failed with error code: " + std::to_string(GetLastError()));
 
 	return res;
 }

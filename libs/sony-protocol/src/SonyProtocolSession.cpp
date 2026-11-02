@@ -5,11 +5,13 @@
 
 namespace sony::protocol {
 
-SonyProtocolSession::SonyProtocolSession(std::unique_ptr<transport::ITransport> transport)
-    : _ownedTransport(std::move(transport)), _transport(_ownedTransport.get()) {}
+SonyProtocolSession::SonyProtocolSession(std::unique_ptr<transport::ITransport> transport,
+                                       ReplyPolicy replyPolicy)
+    : _ownedTransport(std::move(transport)), _transport(_ownedTransport.get()),
+      _replyPolicy(replyPolicy) {}
 
-SonyProtocolSession::SonyProtocolSession(transport::ITransport* transport)
-    : _transport(transport) {}
+SonyProtocolSession::SonyProtocolSession(transport::ITransport* transport, ReplyPolicy replyPolicy)
+    : _transport(transport), _replyPolicy(replyPolicy) {}
 
 SonyProtocolSession::~SonyProtocolSession() {
     disconnect();
@@ -73,6 +75,12 @@ void SonyProtocolSession::disconnect() noexcept {
 
 bool SonyProtocolSession::isConnected() const noexcept {
     return _healthy.load() && _running.load() && _transport && _transport->isConnected();
+}
+
+void SonyProtocolSession::waitForRetry(std::chrono::milliseconds delay) {
+    std::unique_lock lock(_sessionMtx);
+    if (_responseCv.wait_for(lock, delay, [this] { return !_running.load(); }))
+        throw SonyException(SonyErrorCode::Disconnected, "Retry cancelled");
 }
 
 transport::ITransport* SonyProtocolSession::transport() const noexcept {
@@ -202,10 +210,6 @@ void SonyProtocolSession::_parseStream(std::vector<SonyFrame>& outFrames) {
 }
 
 void SonyProtocolSession::_handleDecodedFrame(const SonyFrame& frame) {
-    if (_healthy.load()) {
-        _consecutiveRequestTimeouts.store(0);
-    }
-
     if (frame.type == DataType::Ack) {
         Logger::debug(LogCategory::Session, "RX  ACK seq=" + std::to_string(frame.sequence));
         std::lock_guard lock(_sessionMtx);
@@ -266,7 +270,7 @@ void SonyProtocolSession::_handleDecodedFrame(const SonyFrame& frame) {
                     }
                 }
             }
-            if (!matchedRequest) {
+            if (!matchedRequest && _replyPolicy == ReplyPolicy::BufferedCompatibility) {
                 _unmatchedFrames.push_back(frame);
                 if (_unmatchedFrames.size() > 32) {
                     _unmatchedFrames.pop_front();
@@ -349,6 +353,7 @@ void SonyProtocolSession::_writeFrame(const SonyFrame& frame) {
 }
 
 void SonyProtocolSession::send(const SonyFrame& frame, std::chrono::milliseconds timeout) {
+    if (_beforeRequest) _beforeRequest();
     if (!isConnected()) {
         throw SonyException(SonyErrorCode::Disconnected, "Transport not connected");
     }
@@ -399,6 +404,7 @@ SonyFrame SonyProtocolSession::sendAndAwaitResponse(
     std::chrono::milliseconds timeout,
     std::function<bool(const SonyFrame&)> responseFilter)
 {
+    if (_beforeRequest) _beforeRequest();
     if (!isConnected()) {
         throw SonyException(SonyErrorCode::Disconnected, "Transport not connected");
     }
@@ -425,8 +431,11 @@ SonyFrame SonyProtocolSession::sendAndAwaitResponse(
             .expectedAckSeq = toSend.sequence
         };
 
-        // Check if matching response was already buffered in _unmatchedFrames
-        for (auto it = _unmatchedFrames.begin(); !_pendingRequest->responseFilter && it != _unmatchedFrames.end(); ++it) {
+        // Live confirmation must wait for a reply received after this request.
+        // Retain buffered replay only for compatibility with scripted callers.
+        for (auto it = _unmatchedFrames.begin();
+             _replyPolicy == ReplyPolicy::BufferedCompatibility &&
+             !_pendingRequest->responseFilter && it != _unmatchedFrames.end(); ++it) {
             if (it->type == request.type && !it->payload.empty() && it->payload[0] == retOpcode) {
                 if (retSubtype < 0 || (it->payload.size() >= 2 && it->payload[1] == static_cast<uint8_t>(retSubtype))) {
                     _pendingRequest->response = *it;
@@ -461,6 +470,7 @@ SonyFrame SonyProtocolSession::sendAndAwaitResponse(
             _hasAck = false;
             SonyFrame resp = std::move(_pendingRequest->response);
             _pendingRequest.reset();
+            _consecutiveRequestTimeouts.store(0);
             return resp;
         }
         _pendingRequest.reset();
@@ -476,6 +486,9 @@ SonyFrame SonyProtocolSession::sendAndAwaitResponse(
     _hasAck = false;
     SonyFrame resp = std::move(_pendingRequest->response);
     _pendingRequest.reset();
+    // ACKs and notifications can survive a stalled control request channel.
+    // Only a completed query proves that response handling has recovered.
+    _consecutiveRequestTimeouts.store(0);
     return resp;
 }
 

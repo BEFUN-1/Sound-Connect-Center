@@ -8,6 +8,8 @@ add_executable(sonyctl
 
 target_compile_features(sonyctl PRIVATE cxx_std_20)
 target_link_libraries(sonyctl PRIVATE sony-core sony-protocol sony-transport Threads::Threads)
+sony_deploy_mingw_runtime(sonyctl)
+sony_windows_version(sonyctl)
 
 if(MINGW AND CMAKE_SIZEOF_VOID_P EQUAL 8)
     target_link_options(sonyctl PRIVATE "-Wl,--image-base,0x140000000")

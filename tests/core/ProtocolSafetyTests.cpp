@@ -67,6 +67,13 @@ public:
     std::vector<uint8_t> opcodes;
 };
 
+class NegotiatedV1Transport final : public OpcodeRecordingTransport {
+public:
+    [[nodiscard]] std::optional<SonyProtocolVersion> protocolVersion() const noexcept override {
+        return SonyProtocolVersion::V1;
+    }
+};
+
 std::shared_ptr<OpcodeRecordingTransport> makeTransport() {
     return std::make_shared<OpcodeRecordingTransport>();
 }
@@ -144,4 +151,17 @@ TEST_CASE("A known V2 device still selects the V2 command set",
 
     REQUIRE(service.activeDevice() != nullptr);
     CHECK(service.activeDevice()->protocolVersion() == SonyProtocolVersion::V2);
+}
+
+TEST_CASE("The negotiated service generation overrides a misleading Bluetooth name",
+          "[core][protocol][generation][regression]") {
+    auto transport = std::make_shared<NegotiatedV1Transport>();
+    DeviceService service(transport, nullptr, [] { return DeviceService::Clock::now(); },
+                          InitialRefresh::None, false);
+
+    service.connect(DeviceAddress("11:22:33:44:55:66"), "WH-1000XM5");
+
+    REQUIRE(service.activeDevice() != nullptr);
+    CHECK(service.activeDevice()->protocolVersion() == SonyProtocolVersion::V1);
+    CHECK_FALSE(transport->sent(kPowerOffOnV1));
 }

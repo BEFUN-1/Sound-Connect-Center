@@ -18,8 +18,10 @@ void BluetoothConnectorTransport::connect(const DeviceAddress& address) {
     try {
         _connector->connect(address.str());
     } catch (const RecoverableException& e) {
+        _connector->disconnect();
         throw SonyException(SonyErrorCode::TransportFailure, e.what());
     } catch (const std::exception& e) {
+        _connector->disconnect();
         throw SonyException(SonyErrorCode::TransportFailure, e.what());
     }
 }
@@ -84,6 +86,15 @@ size_t BluetoothConnectorTransport::receive(std::span<std::byte> buffer) {
     }
 }
 
+std::optional<protocol::SonyProtocolVersion> BluetoothConnectorTransport::protocolVersion() const noexcept {
+    if (!_connector || !_connector->isConnected()) {
+        return std::nullopt;
+    }
+    return _connector->getProtocolVersion() == ::SonyProtocolVersion::V2
+        ? protocol::SonyProtocolVersion::V2
+        : protocol::SonyProtocolVersion::V1;
+}
+
 IBluetoothConnector* BluetoothConnectorTransport::connector() const noexcept {
     return _connector;
 }
@@ -105,10 +116,14 @@ std::vector<DiscoveredDevice> BluetoothConnectorDiscovery::discover() {
         result.push_back(DiscoveredDevice{
             .name = dev.name,
             .address = DeviceAddress(dev.mac),
-                        .paired = dev.paired, .connected = dev.connected
+            .paired = dev.paired, .connected = dev.connected
         });
     }
     return result;
+}
+
+std::vector<std::string> BluetoothConnectorDiscovery::localAddresses() {
+    return _connector ? _connector->getLocalAddresses() : std::vector<std::string>{};
 }
 
 } // namespace sony::transport

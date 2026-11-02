@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include "../support/PrivateSocket.h"
+#include "../support/ReplyTransport.h"
 
 using namespace sony;
 using namespace sony::core;
@@ -16,65 +17,7 @@ using namespace sony::transport;
 
 namespace {
 
-class AutoAckFakeTransport : public FakeTransport {
-public:
-    size_t send(std::span<const std::byte> data) override {
-        size_t res = FakeTransport::send(data);
-        if (!data.empty()) {
-            std::vector<uint8_t> bytes(data.size());
-            std::transform(data.begin(), data.end(), bytes.begin(), [](std::byte b) {
-                return static_cast<uint8_t>(b);
-            });
-            try {
-                auto frame = FrameCodec::decode(bytes);
-                if (frame.type == DataType::DataMdr) {
-                    SonyFrame ackFrame{
-                        .type = DataType::Ack,
-                        .sequence = frame.sequence,
-                        .payload = {}
-                    };
-                    queueIncoming(FrameCodec::encode(ackFrame));
-                    // Auto-respond to known inquiry requests
-                    if (!frame.payload.empty()) {
-                        uint8_t op = frame.payload[0];
-                        if (frame.payload == std::vector<uint8_t>{0x00, 0x00}) {
-                            queueIncoming(FrameCodec::encode(SonyFrame{
-                                .type = DataType::DataMdr,
-                                .sequence = 1,
-                                .payload = {0x01, 0, 0, 0, 0, 0, 1, 1}
-                            }));
-                        } else if (op == 0x22) { // Battery query
-                            queueIncoming(FrameCodec::encode(SonyFrame{
-                                .type = DataType::DataMdr,
-                                .sequence = 1,
-                                .payload = {0x23, 0x00, 85, 0x00}
-                            }));
-                        } else if (op == 0x66) { // NC query
-                            queueIncoming(FrameCodec::encode(SonyFrame{
-                                .type = DataType::DataMdr,
-                                .sequence = 1,
-                                .payload = {0x67, 0x17, 0x01, 0x01, 0x00, 0x00, 0x00}
-                            }));
-                        } else if (op == 0x56) { // EQ query
-                            queueIncoming(FrameCodec::encode(SonyFrame{
-                                .type = DataType::DataMdr,
-                                .sequence = 1,
-                                .payload = {0x57, 0x00, 0x00, 0x06, 0x0a, 0x0a, 0x0a, 0x0a, 0x0a, 0x0a}
-                            }));
-                        } else if (op == 0xe6) { // DSEE query
-                            queueIncoming(FrameCodec::encode(SonyFrame{
-                                .type = DataType::DataMdr,
-                                .sequence = 1,
-                                .payload = {0xe7, 0x01, 0x00}
-                            }));
-                        }
-                    }
-                }
-            } catch (...) {}
-        }
-        return res;
-    }
-};
+using AutoAckFakeTransport = ReplyTransport;
 
 } // namespace
 

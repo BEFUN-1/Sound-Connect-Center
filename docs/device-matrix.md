@@ -4,6 +4,19 @@ This document tracks hardware-level verification and protocol capability support
 
 > **Validation Policy**: Devices must never be marked as *Verified* based solely on protocol similarity. Real-world testing with physical hardware and specific firmware versions is required.
 
+## Current 2.0.6 development preview
+
+The November 2, 2026 Windows 2.0.6 run physically checked a WH-1000XM6:
+battery readout, nine noise-mode changes confirmed by fresh reads, manual
+control disconnect/recovery, and battery updates while the window was hidden.
+The firmware query returned no version, so this run cannot be assigned to a
+specific firmware. See [2.0.6 acceptance](acceptance-2.0.6-2026-11-02.md).
+
+Physical system reconnect, buttons, a full power cycle, phone calls and
+multipoint audio routing were not fully accepted in this round.
+All entries in the historical matrix below refer to earlier observations;
+they do not establish that every feature was retested on 2.0.6.
+
 ## Support Status Legend
 
 - **Verified**: Fully tested and confirmed working with physical hardware on the noted firmware version.
@@ -20,7 +33,7 @@ This document tracks hardware-level verification and protocol capability support
 | **WH-1000XM3** | V1 | RFCOMM | Verified | Verified | Verified | N/A (V1) | N/A (V1) | Unknown | SBC, AAC, LDAC, aptX | N/A | N/A | 4.5.2 | Community |
 | **WH-1000XM4** | V1 | RFCOMM | Verified | Verified | Verified | Verified | Not implemented (V1) | Verified | AAC verified | Verified (on/off; Standard ~30s) | Not implemented (V1) | 3.0.1 | Community (Windows) |
 | **WH-1000XM5** | V2 | RFCOMM | Verified | Verified | Verified | Verified | Verified | Verified | SBC, AAC, LDAC | Verified | Verified | 2.3.1 | Core Dev |
-| **WH-1000XM6** | V2 | RFCOMM | Intermittent | Readback unresolved | Readback unresolved | Verified (10-band, no Clear Bass) | Expected | Expected | Expected | Expected | Expected | 3.1.5 | Community hardware verification |
+| **WH-1000XM6** | V2 | RFCOMM | Limited 2.0.6 check passed | Limited 2.0.6 readback passed | Limited 2.0.6 readback passed | Historical verification (10-band, no Clear Bass) | Expected | Query empty in 2.0.6 | Expected | Expected | Earlier configuration checks | Not returned in 2.0.6; historical EQ: 3.1.5 | See versioned acceptance records |
 | **WF-1000XM4** | V2 | RFCOMM | Expected (Dual+Case) | Expected | Expected | Expected | Expected | Expected | SBC, AAC, LDAC | Expected | Expected | — | Awaiting HW |
 | **WF-1000XM5** | V2 | RFCOMM | Expected (Dual+Case) | Expected | Expected | Expected | Expected | Expected | SBC, AAC, LDAC | Expected | Expected | — | Awaiting HW |
 | **WH-CH720N** | V2 | RFCOMM | Expected | Expected | Expected | Expected | Expected | Expected | SBC, AAC | N/A | Expected | — | Awaiting HW |
@@ -30,6 +43,14 @@ This document tracks hardware-level verification and protocol capability support
 ---
 
 ## Protocol Differences Summary
+
+### 2026-11-01 WH-1000XM6 configuration validation
+
+On a physical WH-1000XM6 running firmware 3.0.0, ANC, ambient 10 and off were
+confirmed by fresh parameter readback. Auto power-off advertised only disabled
+and when-removed modes, both of which were successfully written and read back.
+Actual removal timing and audible shutdown remain hardware observations.
+See [the Qt 2.0.1 validation record](qt-2.0.1-validation-2026-11-01.md).
 
 ### Protocol V1 (e.g. WH-1000XM3, WH-1000XM4 legacy)
 - Fixed command lengths without variable payloads.
@@ -47,7 +68,7 @@ This document tracks hardware-level verification and protocol capability support
 - Subtypes for dual battery channels (left, right) and charging case.
 - Dynamic ANC and 20-step Ambient sound level control (`0x66` / `0x67` / `0x68`).
 - 5-band graphic equalizer with Clear Bass (`0x56` / `0x57` / `0x58`).
-- WH-1000XM6 uses equalizer subtype `0x04`, ten raw band values (0–12), and no Clear Bass. The Qt app and CLI support it; the legacy ImGui client does not.
+- WH-1000XM6 uses equalizer subtype `0x04`, ten raw band values (0–12), and no Clear Bass. The Qt app and CLI support it.
 - DSEE Extreme toggle (`0xe6` / `0xe7` / `0xe8`).
 - Speak-to-Chat toggle (`0xf6` / `0xf7` / `0xf8`).
 - Auto Power-Off configuration (`0x26` / `0x27` / `0x28`).

@@ -103,6 +103,38 @@ private:
     bool disconnectAfterReply{false};
 };
 
+class ControlHealthTransport final : public FakeTransport {
+public:
+    bool acknowledge{true};
+    bool notify{false};
+    bool respond{false};
+
+    size_t send(std::span<const std::byte> data) override {
+        const auto count = FakeTransport::send(data);
+        std::vector<uint8_t> bytes;
+        for (const auto byte : data) bytes.push_back(static_cast<uint8_t>(byte));
+        const auto frame = FrameCodec::decode(bytes);
+        if (frame.type != DataType::DataMdr) return count;
+        if (acknowledge) queueFrame(*this, makeAckFrame(1 - (frame.sequence & 1)));
+        if (notify) queueFrame(*this, makeDataFrame(nextIncomingSequence++ & 1, {0x09, 1, 0x99}));
+        if (respond) queueFrame(*this, makeDataFrame(nextIncomingSequence++ & 1, {0x03, 1, 0x50}));
+        return count;
+    }
+
+private:
+    uint8_t nextIncomingSequence{0};
+};
+
+void requireResponseTimeout(SonyProtocolSession& session) {
+    try {
+        session.sendAndAwaitResponse(
+            makeDataFrame(0, {0x02, 1}), 0x03, 1, std::chrono::milliseconds(75));
+        FAIL("Expected response timeout");
+    } catch (const SonyException& ex) {
+        REQUIRE(ex.code() == SonyErrorCode::Timeout);
+    }
+}
+
 } // namespace
 
 TEST_CASE("SonyProtocolSession: ACK before response completes successfully", "[protocol][session]")
@@ -180,6 +212,7 @@ TEST_CASE("SonyProtocolSession: response before unrelated notification", "[proto
     REQUIRE(notifications.size() == 1);
     REQUIRE(notifications[0].payload == std::vector<uint8_t>{0x04, 0x01, 0x10});
 }
+
 
 TEST_CASE("SonyProtocolSession: notification between ACK and response", "[protocol][session]")
 {
@@ -272,6 +305,7 @@ TEST_CASE("SonyProtocolSession: timeouts on missing ACK or missing response", "[
         } catch (const SonyException& ex) {
             REQUIRE(ex.code() == SonyErrorCode::Timeout);
         }
+        REQUIRE_FALSE(session.isConnected());
     }
 
     SECTION("sendAndAwaitResponse() times out when response is never sent")
@@ -337,6 +371,63 @@ TEST_CASE("SonyProtocolSession: disconnect during pending request throws Disconn
 
     REQUIRE(caughtCode.has_value());
     REQUIRE(*caughtCode == SonyErrorCode::Disconnected);
+}
+
+TEST_CASE("SonyProtocolSession: ACKs and notifications cannot mask missing control responses",
+          "[protocol][session][recovery][multipoint]")
+{
+    ControlHealthTransport fake;
+    SonyProtocolSession session(&fake);
+    session.connect("11:22:33:44:55:66");
+
+    SECTION("ACKs without responses") {}
+    SECTION("Unrelated notifications without responses") {
+        fake.acknowledge = false;
+        fake.notify = true;
+    }
+    SECTION("ACKs and unrelated notifications without responses") {
+        fake.notify = true;
+    }
+
+    requireResponseTimeout(session);
+    REQUIRE(session.isConnected());
+    requireResponseTimeout(session);
+    REQUIRE_FALSE(session.isConnected());
+    REQUIRE(fake.isConnected()); // The OS link can still report connected.
+}
+
+TEST_CASE("SonyProtocolSession: only matching response success resets response failures",
+          "[protocol][session][recovery][multipoint]")
+{
+    ControlHealthTransport fake;
+    SonyProtocolSession session(&fake);
+    session.connect("11:22:33:44:55:66");
+    requireResponseTimeout(session);
+    REQUIRE(session.isConnected());
+
+    SECTION("A successful query resets the failure count") {
+        fake.respond = true;
+        REQUIRE(session.sendAndAwaitResponse(
+            makeDataFrame(0, {0x02, 1}), 0x03, 1, std::chrono::seconds(1)).payload ==
+            std::vector<uint8_t>{0x03, 1, 0x50});
+        fake.respond = false;
+        requireResponseTimeout(session);
+        REQUIRE(session.isConnected());
+        requireResponseTimeout(session);
+        REQUIRE_FALSE(session.isConnected());
+    }
+    SECTION("ACK-only command success does not prove queries are healthy") {
+        REQUIRE_NOTHROW(session.send(makeDataFrame(0, {0x04, 1}), std::chrono::seconds(1)));
+        requireResponseTimeout(session);
+        REQUIRE_FALSE(session.isConnected());
+    }
+    SECTION("A response rejected by the request filter does not reset failures") {
+        fake.respond = true;
+        CHECK_THROWS_AS(session.sendAndAwaitResponse(
+            makeDataFrame(0, {0x02, 1}), 0x03, 1, std::chrono::milliseconds(75),
+            [](const SonyFrame&) { return false; }), SonyException);
+        REQUIRE_FALSE(session.isConnected());
+    }
 }
 
 TEST_CASE("SonyProtocolSession: disconnect cancels a blocked transport read", "[protocol][session][lifecycle]")

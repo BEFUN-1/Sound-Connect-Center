@@ -1,5 +1,7 @@
 #include "sony/core/JsonProtocol.h"
 #include "sony/protocol/EqualizerPresets.h"
+#include "sony/protocol/MultipointCodec.h"
+#include <algorithm>
 #include <cctype>
 namespace sony::core {
 using Json = JsonProtocol::Json;
@@ -18,6 +20,22 @@ Json JsonProtocol::snapshot(IDeviceService& service) {
     auto* dev = service.activeDevice();
     auto s = service.snapshot();
     const auto c = dev ? dev->capabilities() : protocol::DeviceCapabilities{};
+    Json data = {
+        {"connected", connected}, {"connectionState", service.connectionState()},
+        {"address", service.selectedAddress()}, {"name", dev ? dev->name() : ""},
+        {"lastError", service.lastError()}, {"protocol", dev ? std::string(protocol::to_string(dev->protocolVersion())) : "unknown"},
+        {"capabilities", {{"anc", c.noiseCancelling}, {"ambient", c.ambientSound}, {"focusOnVoice", c.focusOnVoice},
+            {"equalizer", c.equalizer}, {"clearBass", c.clearBass}, {"tenBandEqualizer", c.tenBandEqualizer},
+            {"dsee", c.dsee}, {"battery", c.battery},
+            {"speakToChat", c.speakToChat}, {"adaptiveVolume", c.adaptiveVolume}, {"autoPowerOff", c.autoPowerOff},
+            {"powerOff", c.powerOff}, {"multipoint", c.multipoint}, {"wearSensor", c.wearSensor}}},
+    };
+    data["connectionIntent"] = static_cast<int>(service.connectionIntent());
+    data["systemConnected"] = optional(service.systemConnected());
+    data.update(stateSnapshot(s, connected));
+    return data;
+}
+Json JsonProtocol::stateSnapshot(protocol::DeviceStateSnapshot s, bool connected) {
     Json features = Json::object();
     for (const auto& [name, status] : s->features) {
         features[name] = {{"availability", !connected && status.availability == "valid" ? "stale" : status.availability},
@@ -28,13 +46,7 @@ Json JsonProtocol::snapshot(IDeviceService& service) {
         {"address", d.address}, {"name", d.name}, {"connectionIndex", d.connectionIndex},
         {"deviceClass", d.deviceClass}, {"connected", d.connected}, {"playing", d.playing}});
     return {
-        {"connected", connected}, {"connectionState", service.connectionState()},
-        {"address", service.selectedAddress()}, {"name", dev ? dev->name() : ""},
-        {"lastError", service.lastError()}, {"protocol", dev ? std::string(protocol::to_string(dev->protocolVersion())) : "unknown"},
-        {"capabilities", {{"anc", c.noiseCancelling}, {"ambient", c.ambientSound}, {"focusOnVoice", c.focusOnVoice},
-            {"equalizer", c.equalizer}, {"clearBass", c.clearBass}, {"tenBandEqualizer", c.tenBandEqualizer},
-            {"dsee", c.dsee}, {"battery", c.battery},
-            {"speakToChat", c.speakToChat}, {"adaptiveVolume", c.adaptiveVolume}, {"autoPowerOff", c.autoPowerOff}, {"powerOff", c.powerOff}, {"multipoint", c.multipoint}}},
+        {"sessionId", s->sessionId}, {"revision", s->revision},
         {"features", features},
         {"multipoint", {{"supported", s->multipoint.supported}, {"sourceSwitchSupported", s->multipoint.sourceSwitchSupported},
             {"sourceKeepSupported", s->multipoint.sourceKeepSupported}, {"inquiredType", s->multipoint.inquiredType},
@@ -48,7 +60,8 @@ Json JsonProtocol::snapshot(IDeviceService& service) {
         {"equalizer", {{"preset", s->equalizer.preset}, {"presetName", protocol::equalizerPresetName(s->equalizer.preset)},
             {"clearBass", s->equalizer.clearBass}, {"bands", s->equalizer.bands}}},
         {"dsee", s->dsee}, {"speakToChat", s->speakToChat}, {"adaptiveVolume", s->adaptiveVolume},
-        {"autoPowerOff", s->autoPowerOff}, {"codec", s->codec.empty() ? "Unknown" : s->codec},
+        {"autoPowerOff", s->autoPowerOff}, {"autoPowerOffOptions", s->autoPowerOffOptions},
+        {"codec", s->codec.empty() ? "Unknown" : s->codec},
         {"firmware", s->firmware.empty() ? "Unknown" : s->firmware}
     };
 }
@@ -85,6 +98,7 @@ Json JsonProtocol::execute(const Json& request, IDeviceService& service) {
         else {
             auto* dev = service.activeDevice();
             if (!dev || !service.isConnected()) throw SonyException(SonyErrorCode::Disconnected, "Headphones are disconnected; wait for reconnection");
+            service.validateSelectedTarget(params.value("targetAddress", std::string{}));
             const auto& c = dev->capabilities();
             if (method == "anc") { supported(c.noiseCancelling); dev->setAnc(params.at("enabled").get<bool>()); }
             else if (method == "ambient") {
@@ -114,8 +128,19 @@ Json JsonProtocol::execute(const Json& request, IDeviceService& service) {
             } else if (method == "dsee") { supported(c.dsee); dev->setDsee(params.at("enabled").get<bool>()); }
             else if (method == "speakToChat") { supported(c.speakToChat); dev->setSpeakToChat(params.at("enabled").get<bool>()); }
             else if (method == "adaptiveVolume") { supported(c.adaptiveVolume); dev->setAdaptiveVolume(params.at("enabled").get<bool>()); }
-            else if (method == "autoPowerOff") { supported(c.autoPowerOff); dev->setAutoPowerOff(integer(params, "index", 0, 5)); }
-            else if (method == "powerOff") { supported(c.powerOff); dev->powerOff(); }
+            else if (method == "autoPowerOff") { supported(c.autoPowerOff); dev->setAutoPowerOff(integer(params, "index", 0, 6)); }
+            else if (method == "powerOff") {
+                supported(c.powerOff);
+                service.powerOff();
+            }
+            else if (method == "multipoint") {
+                const auto action = params.value("action", std::string("list"));
+                const auto address = params.value("address", std::string{});
+                const bool closesControl = (action == "disconnect" || action == "unpair") &&
+                    service.isLocalPeer(address);
+                dev->performMultipoint(action, address, params.value("enabled", false), closesControl);
+                if (closesControl) service.disconnect();
+            }
             else throw std::invalid_argument("Unknown method: " + method);
             data = snapshot(service);
         }

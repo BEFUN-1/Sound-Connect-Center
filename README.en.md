@@ -1,160 +1,120 @@
 # Sony Device Center
 
-This is an open-source experimental project for Sony headphones. It is intended to study and try to read or modify selected device states over Bluetooth.
+**Check your Sony headphones' battery, switch noise control, and adjust the equalizer from your Windows desktop.**
 
-The project includes:
+Sony Device Center is an independent open-source project with a Qt 6 / QML desktop app, the `sonyctl` CLI, the `sonyd` daemon, and reusable C++20 Bluetooth and protocol libraries. No Sony account is required.
 
-- A desktop application based on C++ and Qt
-- The `sonyctl` command-line tool
-- The `sonyd` background service
-- C++ code for Bluetooth transport, protocol parsing, and device state handling
-- Windows desktop launcher and installer scripts
+[Download 2.0.6 development preview](https://github.com/BEFUN-1/Sound-Connect-Center/releases/tag/v2.0.6-dev) · [中文](README.md) · [Getting started](docs/getting-started.md) · [Documentation](docs/README.md)
 
-The project is still under development. Results may vary by model, firmware, and operating system. The commands implemented in the code do not mean that every device supports them. Check the test results and device notes before use. This project is not a replacement for Sony's official software.
+![Sony Device Center 2.0.6 English overview with simulated WH-1000XM6 data](docs/screenshots/v2.0.6/overview-en.png)
 
-## Current status
+> The current download is a **Windows x64, unsigned Development prerelease: 2.0.6-dev**, dated November 2, 2026. Features and compatibility remain under development. Screenshots use simulated headphones and isolated settings; they contain no real Bluetooth addresses, paired-device names, accounts, or desktop content. They do not establish hardware compatibility.
 
-The current release is **1.3**. The Windows build includes the control-channel recovery fix for switching back to the computer after a phone call on a multipoint headset. See [`docs/release-v1.3.md`](docs/release-v1.3.md) for the release validation record.
+## Features
 
-Current work mainly covers:
+| Feature | Scope |
+| --- | --- |
+| Battery and status | Headphone battery, connection state and device-reported information; battery display in the system tray |
+| Noise control | Noise cancelling, ambient sound and off modes, with parameters based on device capabilities |
+| Equalizer | Device presets, custom settings and saved local presets, including the WH-1000XM6 ten-band implementation |
+| Audio and power | Capability-dependent DSEE, Speak-to-Chat, automatic power-off and headphone shutdown |
+| Devices and multipoint | Target headset selection and supported multipoint operations |
+| Preferences | Light/dark themes, multiple languages, startup preferences and tray controls |
+| Developer tools | CLI, daemon and layered libraries; fake transport for tests without hardware |
 
-- Frame parsing and validation for Sony headphone Bluetooth communication
-- Reading and writing selected commands from the first and second protocol generations
-- A common representation for battery, noise control, equalizer, and other device states
-- Protocol implementation for selected multipoint features
-- Basic cooperation between the desktop application, command-line tool, and background service
+Availability depends on the model, firmware and operating system. Unknown or unsupported states are shown explicitly. An implemented protocol command does not establish support on every device.
 
-Protocol and simulation tests can run without a headphone, but they only verify code behavior. They do not prove that a model works in a real environment. Check `docs/device-matrix.md` and the hardware test records for actual device status.
+## Interface
 
-## Device support
+| Noise control | Equalizer |
+| --- | --- |
+| ![Noise control with synthetic data](docs/screenshots/v2.0.6/noise-control.png) | ![WH-1000XM6 ten-band equalizer with synthetic data](docs/screenshots/v2.0.6/equalizer.png) |
 
-The project does not promise complete model support. Whether a device works depends on its model, firmware, Bluetooth adapter, and operating system.
+| Audio and device features | Settings |
+| --- | --- |
+| ![Audio and power controls with synthetic data](docs/screenshots/v2.0.6/audio-features.png) | ![Theme, language and startup settings using an isolated demo profile](docs/screenshots/v2.0.6/settings.png) |
 
-The repository contains tests and notes for selected WH-series devices. Other devices may only support discovery, connection, or some state queries. For an unverified model, start with read-only commands and record the model, firmware version, operating system, and failed step.
+See [screenshot provenance and capture instructions](docs/screenshots/README.md).
 
-## Build requirements
+## Download and run
 
-Common requirements include:
+1. Open the [2.0.6-dev Release](https://github.com/BEFUN-1/Sound-Connect-Center/releases/tag/v2.0.6-dev) and download `SonyDeviceCenter-Qt2-2.0.6-dev-Setup.exe`.
+2. Pair and connect your headset in Windows Bluetooth settings. Exit an older running version through its tray menu before upgrading.
+3. Run the installer as a normal user. It installs into a fixed per-user directory, requires no administrator privileges and rejects custom `/D` paths.
+4. Open the app and select your headset on the devices page. It remembers that target and does not fall back to another headset when the target is unavailable.
+5. Closing the window leaves the app in the tray. Use the tray menu to quit.
 
-- A C++20 compiler
-- CMake
-- Qt 6 for the desktop application
-- Catch2 3 for tests
-- Bluetooth development libraries for the target operating system
-
-The project includes an ImGui submodule. After cloning the repository, run:
-
-```bash
-git submodule update --init --recursive
-```
-
-### Linux
-
-On Ubuntu or Debian, install the basic dependencies:
-
-```bash
-sudo apt update
-sudo apt install -y build-essential cmake git \
-  libbluetooth-dev libdbus-1-dev qt6-base-dev \
-  qt6-declarative-dev qml6-module-qtquick-controls
-```
-
-Configure, build, and run the tests:
-
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
-cmake --build build --parallel
-ctest --test-dir build --output-on-failure
-```
-
-### macOS
-
-Install the Xcode Command Line Tools, CMake, and Qt 6, then run:
-
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
-  -DBUILD_TESTING=ON \
-  -DCMAKE_PREFIX_PATH="$(brew --prefix qt@6)"
-cmake --build build --parallel
-ctest --test-dir build --output-on-failure
-```
-
-### Windows
-
-Use a Visual Studio 2022 Developer Command Prompt or PowerShell with Qt 6 and CMake installed:
+The installer bundles Qt and the compiler runtime; no separate Qt or .NET installation is needed. This development package has no Authenticode signature. Check the prerelease label, filename and SHA-256; do not disable system security protections.
 
 ```powershell
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release `
-  -DCMAKE_PREFIX_PATH="C:\Qt\6.x.x\msvc2022_64"
-cmake --build build --config Release --parallel
-ctest --test-dir build -C Release --output-on-failure
+Get-FileHash .\SonyDeviceCenter-Qt2-2.0.6-dev-Setup.exe -Algorithm SHA256
 ```
 
-Windows desktop packaging scripts are in `desktop-app/`, and installer scripts are in `packaging/windows/`. Generated runtime files and installers are not source files and are excluded from Git by default.
+SHA-256 of this installer:
 
-## Running
+```text
+3bec4c740a809c213fde22e50bce2365e35687310a10ee88e287aaece976973a
+```
 
-After building, the exact target names depend on the platform and CMake configuration. Common targets include:
+This release provides the Windows installer only. Linux and macOS source and packaging support remain available, with current-version native acceptance still pending.
 
-- `sony-device-center`: desktop application
-- `sonyctl`: command-line tool
-- `sonyd`: background service
+## Changes and validation
 
-Start by viewing the help output:
+Version 2.0.6 focuses on Windows connection ownership and status synchronization:
+
+- Automatic recovery waits when Windows reports the selected headset disconnected or its state unknown.
+- Control can resume when the same headset reconnects to Windows. A manual disconnect remains paused while the original system connection is unchanged.
+- Fixes cover an incorrect permanent startup pause, migration of older pause records and address casing that prevented the UI from updating.
+- Battery scheduling, worker threads, image decoding and Qt payload optimizations from 2.0.5 are retained.
+
+The delivery record reports 202 registered CTest checks: 201 passed and one Unix socket check skipped on Windows; 27 Qt controller checks and nine simulated page/tray lifecycle checks passed. Limited physical WH-1000XM6 checks covered battery reads, nine confirmed noise-mode changes, manual control disconnect/recovery and battery updates while the window was hidden.
+
+This round did not complete physical system disconnect/reconnect, physical buttons, a full power cycle, phone calls and multipoint audio switching, or clean Windows VM installation/upgrade/uninstall. The 2.0.5 two-hour resource run is historical evidence, not a new 2.0.6 result.
+
+See the [release notes](docs/releases/v2.0.6-dev.md), [2.0.6 acceptance record](docs/acceptance-2.0.6-2026-11-02.md) and [compatibility matrix](docs/device-matrix.md).
+
+## Build from source
+
+Requirements: a C++20 compiler, CMake 3.14+, Qt 6 with Quick/QML/Quick Controls 2, and platform Bluetooth development dependencies. With testing enabled, CMake finds Catch2 3 or downloads the pinned fallback.
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+  -DSONY_REQUIRE_QT=ON -DCMAKE_PREFIX_PATH=/path/to/Qt
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure --no-tests=error
+```
+
+For Windows multi-configuration generators, add `--config Release` to the build and `-C Release` to CTest. Use matching compiler and Qt toolchains. See [platform dependencies, packaging and signing](packaging/README.md).
+
+Common targets are `sony-device-center`, `sonyctl` and `sonyd`:
 
 ```bash
 sonyctl --help
-sonyd --help
-```
-
-### Simulation mode
-
-`sonyd --simulated` runs a no-hardware simulation for testing. Simulation mode only checks the interface, command flow, and state handling. It does not prove compatibility with a real headphone.
-
-### Direct connection
-
-The command-line tool supports direct connections. Before using this mode, make sure that no other program or background service is using the same headphone:
-
-```bash
 sonyctl --direct devices
-sonyctl --direct info
+sonyctl --direct --device AA:BB:CC:DD:EE:FF info
+sonyd --simulated
 ```
 
-Use commands that write to a device carefully. For an unverified model, query its state first instead of sending control commands immediately.
+The address is a placeholder. Close competing clients before opening a direct Bluetooth session. Unix socket IPC is unavailable on Windows; the desktop app connects directly and the CLI requires `--direct`.
 
-## Tests
+## Source layout
 
-The tests mainly cover:
+| Path | Purpose |
+| --- | --- |
+| `apps/device-center/` | Qt desktop UI and controller |
+| `apps/sonyctl/`, `apps/sonyd/` | CLI and background service |
+| `libs/sony-transport/` | Bluetooth discovery, transport and fake implementations |
+| `libs/sony-protocol/` | Frames, protocol commands and device capabilities |
+| `libs/sony-core/` | Device service, state, recovery policy and IPC |
+| `tests/` | Protocol, core, UI and packaging checks |
+| `docs/`, `packaging/` | Guides, validation records and platform packaging |
 
-- Frame encoding, escaping, checksums, and error handling
-- Selected command layouts from protocol generations one and two
-- Simulated transport, timeouts, and disconnect/reconnect behavior
-- Device state and command-line protocol handling
-- Selected multipoint commands
+Further reading: [architecture](docs/architecture-current.md), [connection and IPC](docs/ipc-and-lifecycle.md), [known issues](docs/technical-debt.md), [contributing](CONTRIBUTING.md) and the [documentation index](docs/README.md).
 
-Run all configured tests with:
+For issues, include the model, firmware if available, OS version, reproduction steps and error message. Remove Bluetooth addresses, computer/phone names, usernames, local paths and credentials from screenshots and logs.
 
-```bash
-ctest --test-dir build --output-on-failure
-```
+## Disclaimer and license
 
-A passing test only describes the tested scenario. It is not proof of real-device compatibility. Some Windows inter-process communication tests may be skipped because of platform conditions.
+This project is not affiliated with, authorized by or partnered with Sony. It uses a reverse-engineered protocol for interoperability research. Sony and related product names belong to their respective owners.
 
-## Documentation
-
-- `docs/device-matrix.md`: device and feature validation status
-- `docs/architecture-current.md`: current code structure
-- `docs/ipc-and-lifecycle.md`: background service and client communication
-- `docs/reverse-engineering/`: protocol analysis notes
-- `docs/windows-xm6-validation-2026-10-19.md`: Windows hardware validation record
-- `docs/release-v1.3.md`: 1.3 release notes and phone-call handoff validation
-
-Issues and test reports are welcome. When reporting a device problem, include the model, firmware version, operating system, Bluetooth adapter, command used, and the complete error message when possible.
-
-## Disclaimer
-
-This project is not affiliated with, authorized by, or partnered with Sony Corporation. Sony and related product names belong to their respective owners. This project is intended for learning, research, and interoperability testing. Use it at your own risk.
-
-## License
-
-This project is released under the MIT License. See [LICENSE](LICENSE).
+Released under the [MIT License](LICENSE). Third-party components retain their own licenses.

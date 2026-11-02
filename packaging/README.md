@@ -2,6 +2,13 @@
 
 Sony Device Center supports multi-platform packaging for Linux, macOS, and Windows.
 
+The published **2.0.6-dev** preview contains the user-selected, existing unsigned
+Windows installer. It is a GitHub **prerelease**, with an explicit Development
+label and checksums. It is not a signed production build. See
+[its release notes](../docs/releases/v2.0.6-dev.md) for provenance and acceptance
+limits. Linux/macOS packaging below describes build support; no 2.0.6 packages
+for those platforms are included in this preview.
+
 ## 1. Linux Packaging
 
 ### CPack (DEB, RPM, Tarball)
@@ -53,29 +60,84 @@ systemctl --user enable --now sonyd.service
 ## 2. Windows Packaging
 
 ### Portable ZIP & NSIS Installer
+Qt 2.0 is the only active Windows package. CPack produces the portable ZIP;
+`packaging/windows/build-qt-installer.ps1` produces the per-user NSIS installer.
+It installs per user under
+`%LOCALAPPDATA%\Programs\Sony Device Center`, preserves an enabled
+`SonyDeviceCenter` startup entry with `--tray`, and runs with `asInvoker`.
+The installer and uninstaller reject elevated tokens, custom `/D` locations,
+and symbolic links or junctions in the installation tree or its ancestors.
+HKCU cannot override the installation directory. The finish-page launch is unchecked.
+Close the application from its tray before installing or uninstalling.
+The installer does not execute existing applications or kill processes by name.
+Uninstall deletes only files listed in the package manifest; unknown files
+and legacy WinForms runtimes are retained.
+
+Remove earlier custom installations using their original uninstaller, started
+without administrator privileges. The current installer does not reuse their
+registry-controlled path or recursively remove their runtime.
+
 ```powershell
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 
-# Generate portable ZIP
-cpack --config build/CPackConfig.cmake -G ZIP -C Release
+# Unsigned development installer (only distribute as an explicit prerelease)
+.\packaging\windows\build-qt-installer.ps1 -BuildDir build `
+  -Development `
+  -MakeNsis 'C:\path\to\nsis\makensis.exe'
 
-# Generate NSIS Installer
-cpack --config build/CPackConfig.cmake -G NSIS -C Release
+# Generate portable ZIP in the build directory
+cpack --config build/CPackConfig.cmake -B build -G ZIP -C Release
 ```
 
-The Windows Forms desktop release uses the scripts in `desktop-app/` and bundles
-the .NET 8 Desktop Runtime with the native `sonyctl` backend:
+Installers default to `build/artifacts/`; development filenames include `-dev`.
+Historical binaries are kept outside the source repository; validation
+documents remain in `docs/history/`.
+
+### Release source and Authenticode
+
+Production packaging requires clean committed source at `v<project version>`,
+including no untracked source files. The build script verifies the source
+checkout associated with the build directory, reconfigures and rebuilds it.
+Use a new build directory for release acceptance.
+
+Production packaging requires a code-signing certificate with its private key
+in the current user's certificate store, Windows SDK SignTool, and an RFC 3161
+timestamp endpoint from the certificate provider:
 
 ```powershell
-.\desktop-app\build-desktop.ps1
-.\desktop-app\package-installer.ps1 `
-  -MakeNsis 'C:\path\to\nsis\makensis.exe'
+python packaging/verify-release-source.py
+.\packaging\windows\build-qt-installer.ps1 -BuildDir build `
+  -MakeNsis 'C:\path\to\nsis\makensis.exe' `
+  -SigningCertificateThumbprint '<40-hex-certificate-thumbprint>' `
+  -TimestampServer 'https://<certificate-provider-timestamp-endpoint>'
+# Run CPack after signing so portable EXEs have the same signatures.
+cpack --config build/CPackConfig.cmake -B build -G ZIP -C Release
 ```
 
-This produces `SonyDeviceCenter-Setup.exe` and
-`SonyDeviceCenter-Windows-x64.zip` at the repository root. The files are
-release artifacts and remain excluded from Git.
+`sign-artifacts.ps1` signs the three project executables before staging, then
+signs the installer. Each operation is followed by `signtool verify /pa /all /tw`;
+failure stops packaging. Third-party Qt/runtime libraries retain their original
+signatures.
+
+The Release workflow requires these values for tag builds:
+
+| GitHub configuration | Purpose |
+| --- | --- |
+| Secret `SONY_WINDOWS_CERTIFICATE_BASE64` | PFX encoded as base64 |
+| Secret `SONY_WINDOWS_CERTIFICATE_PASSWORD` | PFX password |
+| Variable `SONY_WINDOWS_TIMESTAMP_SERVER` | Certificate provider's timestamp endpoint |
+
+The workflow imports the private key into the ephemeral runner user's store,
+removes the temporary PFX in a `finally` block, and removes the imported signing
+certificate after packaging. No certificate is committed. Missing credentials
+block production releases. Manual previews use `-Development` and do not publish.
+No real signing was performed locally because no signing certificate was provided.
+
+Each platform includes `SOURCE-<platform>.json` with commit, version and tag.
+The publishing job emits `SHA256SUMS` with asset basenames and creates a new
+Release without replacing existing attachments. See
+`docs/release-preparation.md` before uploading.
 
 ---
 
@@ -112,8 +174,7 @@ Files in `packaging/macos/`:
 
 ### Signing and notarization
 Off by default. Ad-hoc builds pass signature integrity checks but can still be
-blocked by Gatekeeper. See the [launch workaround](../README.md#macos-launch-warnings)
-for existing downloads. The permanent fix requires an Apple Developer Program
+blocked by Gatekeeper. A trusted production distribution requires an Apple Developer Program
 membership, a **Developer ID Application** certificate with its private key,
 and notarization credentials.
 

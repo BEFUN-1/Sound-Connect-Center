@@ -58,6 +58,7 @@ public:
 
 	//getConnectedDevices can block.
 	virtual std::vector<BluetoothDevice> getConnectedDevices() = 0;
+	virtual std::vector<std::string> getLocalAddresses() { return {}; }
 
 	//Only valid after a successful connect(). Reflects which service UUID (SONY_UUID vs SONY_UUID_V2) was used.
 	virtual SonyProtocolVersion getProtocolVersion() noexcept = 0;

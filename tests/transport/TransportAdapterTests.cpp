@@ -5,6 +5,7 @@
 #include "sony/transport/LinuxBluetoothTransport.h"
 #include "sony/transport/WindowsBluetoothTransport.h"
 #include "sony/transport/MacOSBluetoothTransport.h"
+#include "sony/transport/SonyDeviceFilter.h"
 #include "BluetoothWrapper.h"
 #include "CommandSerializer.h"
 
@@ -35,10 +36,14 @@ public:
 
     void connect(const std::string& addrStr) override {
         connectedAddr = addrStr;
+        if (failConnect) {
+            throw RecoverableException("connect failed", true);
+        }
         _connected = true;
     }
 
     void disconnect() noexcept override {
+        ++disconnectCalls;
         _connected = false;
     }
 
@@ -53,6 +58,7 @@ public:
     std::vector<BluetoothDevice> getConnectedDevices() override {
         return devices;
     }
+    std::vector<std::string> getLocalAddresses() override { return {"00:11:22:33:44:55"}; }
 
     SonyProtocolVersion getProtocolVersion() noexcept override {
         return version;
@@ -65,6 +71,8 @@ public:
     std::vector<BluetoothDevice> devices;
     SonyProtocolVersion version{SonyProtocolVersion::V2};
     bool cancelRequested{false};
+    bool failConnect{false};
+    int disconnectCalls{0};
 };
 
 } // namespace
@@ -104,11 +112,27 @@ TEST_CASE("BluetoothConnectorTransport wraps an IBluetoothConnector as ITranspor
     REQUIRE(discovered[0].address.str() == "11:22:33:44:55:66");
     REQUIRE(discovered[0].paired == true);
     REQUIRE(discovered[0].connected == false);
+    SonyDeviceDiscovery filtered(std::make_unique<BluetoothConnectorDiscovery>(rawMock));
+    REQUIRE(filtered.localAddresses() == std::vector<std::string>{"00:11:22:33:44:55"});
 
     transport.cancelPendingIo();
     REQUIRE(rawMock->cancelRequested);
     transport.disconnect();
     REQUIRE_FALSE(transport.isConnected());
+}
+
+TEST_CASE("BluetoothConnectorTransport cleans up a failed connection attempt", "[transport][adapter][recovery]")
+{
+    auto mock = std::make_unique<MockConnector>();
+    MockConnector* rawMock = mock.get();
+    rawMock->failConnect = true;
+
+    BluetoothConnectorTransport transport(std::move(mock));
+    CHECK_THROWS_AS(
+        transport.connect(DeviceAddress("AA:BB:CC:DD:EE:FF")),
+        SonyException);
+    CHECK_FALSE(transport.isConnected());
+    CHECK(rawMock->disconnectCalls == 1);
 }
 
 TEST_CASE("TransportBluetoothConnector adapts ITransport into IBluetoothConnector", "[transport][adapter]")

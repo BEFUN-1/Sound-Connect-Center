@@ -22,6 +22,7 @@ public:
     [[nodiscard]] bool isConnected() const noexcept override;
     size_t send(std::span<const std::byte> data) override;
     size_t receive(std::span<std::byte> buffer) override;
+    [[nodiscard]] std::optional<protocol::SonyProtocolVersion> protocolVersion() const noexcept override;
 
     [[nodiscard]] IBluetoothConnector* connector() const noexcept;
 
@@ -37,6 +38,7 @@ public:
     ~BluetoothConnectorDiscovery() override = default;
 
     std::vector<DiscoveredDevice> discover() override;
+    std::vector<std::string> localAddresses() override;
 
 private:
     std::unique_ptr<IBluetoothConnector> _ownedConnector;

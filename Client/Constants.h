@@ -177,7 +177,7 @@ enum class SOUND_POSITION_PRESET : signed char
 	OUT_OF_RANGE = -1
 };
 
-//Needed for converting the ImGui Combo index into the VPT index.
+//Needed for converting the sound-position UI index into the VPT index.
 inline const SOUND_POSITION_PRESET SOUND_POSITION_PRESET_ARRAY[] = {
 	SOUND_POSITION_PRESET::OFF,
 	SOUND_POSITION_PRESET::FRONT_LEFT,

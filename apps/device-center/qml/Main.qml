@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Window
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Shapes
@@ -9,7 +10,7 @@ ApplicationWindow {
     height: 780
     minimumWidth: 980
     minimumHeight: 660
-    visible: true
+    visible: !startInTray
     title: "Sony Device Center — " + controller.deviceName
     color: bg
 
@@ -24,11 +25,108 @@ ApplicationWindow {
             wrapMode: Text.Wrap
             color: controller.lastError.length ? window.danger : window.txtDim
             text: controller.lastError.length ? controller.lastError :
-                controller.busy ? "Working…" : "Connection: " + controller.connectionState
+                controller.busy ? window.tr("working") :
+                controller.statusDescription
         }
     }
 
     property int navIndex: 0
+    property string pendingUnpairAddress: ""
+    property string pendingUnpairName: ""
+    property string presetDialogMode: "save"
+    property int pendingPresetId: -1
+
+    Dialog {
+        id: unpairDialog
+        modal: true
+        title: window.tr("remove_paired_device_title")
+        standardButtons: Dialog.Yes | Dialog.No
+        implicitWidth: Math.min(window.width - 48, 520)
+        onAccepted: {
+            if (window.pendingUnpairAddress.length > 0)
+                controller.multipointUnpair(window.pendingUnpairAddress)
+            window.pendingUnpairAddress = ""
+            window.pendingUnpairName = ""
+        }
+        contentItem: Text {
+            textFormat: Text.PlainText
+            text: window.trFormat("remove_paired_device_message", [window.pendingUnpairName])
+            color: window.txt
+            wrapMode: Text.WordWrap
+            padding: 22
+        }
+    }
+
+    Dialog {
+        id: equalizerPresetDialog
+        modal: true
+        title: window.presetDialogMode === "rename"
+              ? window.tr("rename_eq_preset_title") : window.tr("save_eq_preset_title")
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        implicitWidth: Math.min(window.width - 48, 420)
+        onOpened: {
+            presetNameField.text = window.presetDialogMode === "rename"
+                ? window.controllerPresetName(window.pendingPresetId) : ""
+            presetNameField.forceActiveFocus()
+            presetNameField.selectAll()
+        }
+        onAccepted: {
+            var name = presetNameField.text.trim()
+            if (name.length === 0) return
+            if (window.presetDialogMode === "rename")
+                controller.renameEqualizerPreset(window.pendingPresetId, name)
+            else
+                controller.saveEqualizerPreset(name)
+            presetNameField.clear()
+        }
+        contentItem: ColumnLayout {
+            spacing: 10
+            implicitWidth: 340
+            Text {
+                textFormat: Text.PlainText
+                text: window.presetDialogMode === "rename"
+                    ? window.tr("rename_eq_preset_desc")
+                    : window.tr("save_eq_preset_desc")
+                color: window.txtDim
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+            TextField {
+                id: presetNameField
+                Layout.fillWidth: true
+                placeholderText: window.tr("preset_name")
+                selectByMouse: true
+                color: window.txt
+                background: Rectangle {
+                    radius: 10
+                    color: window.surfaceSunk
+                    border.width: 1
+                    border.color: window.lineHi
+                }
+            }
+        }
+    }
+
+    Dialog {
+        id: deletePresetDialog
+        modal: true
+        title: window.tr("delete_eq_preset_title")
+        standardButtons: Dialog.Yes | Dialog.No
+        implicitWidth: Math.min(window.width - 48, 420)
+        onAccepted: {
+            if (window.pendingPresetId >= 0)
+                controller.deleteEqualizerPreset(window.pendingPresetId)
+            window.pendingPresetId = -1
+        }
+        contentItem: Text {
+            textFormat: Text.PlainText
+            text: window.trFormat("delete_eq_preset_message",
+                                  [window.controllerPresetName(window.pendingPresetId)])
+            color: window.txt
+            wrapMode: Text.WordWrap
+            padding: 22
+        }
+    }
 
     // Reactive i18n helper
     function tr(key) {
@@ -36,16 +134,47 @@ ApplicationWindow {
         return controller.t(key)
     }
 
+    function trFormat(key, values) {
+        var result = tr(key)
+        for (var i = 0; i < values.length; ++i)
+            result = result.replace("%" + (i + 1), values[i])
+        return result
+    }
+
+    function controllerPresetName(id) {
+        var presets = controller.equalizerPresets
+        for (var i = 0; i < presets.length; ++i)
+            if (presets[i].id === id) return presets[i].name
+        return ""
+    }
+
+    function equalizerDisplayName() {
+        switch (controller.equalizerPreset) {
+        case 0x00: return window.tr("preset_off")
+        case 0x10: return window.tr("preset_bright")
+        case 0x11: return window.tr("preset_excited")
+        case 0x12: return window.tr("preset_mellow")
+        case 0x13: return window.tr("preset_relaxed")
+        case 0x14: return window.tr("preset_vocal")
+        case 0x15: return window.tr("preset_treble_boost")
+        case 0x16: return window.tr("preset_bass_boost")
+        case 0x17: return window.tr("preset_speech")
+        case 0xa0: return controller.equalizerPresetName || window.tr("preset_custom")
+        default: return controller.equalizerPresetName || window.tr("unknown")
+        }
+    }
+
     // ==========================================================
     // DESIGN TOKENS
     // Every color in this file comes from here. No orphan hex.
     // ==========================================================
-    readonly property color bg:            "#0A0B0F"
-    readonly property color surface:       "#14161E"
-    readonly property color surfaceHi:     "#1B1E29"
-    readonly property color surfaceSunk:   "#0E1016"
-    readonly property color line:          "#22252F"
-    readonly property color lineHi:        "#2F3341"
+    readonly property bool darkTheme:       controller.darkTheme
+    readonly property color bg:            darkTheme ? "#0A0B0F" : "#F4F7FB"
+    readonly property color surface:       darkTheme ? "#14161E" : "#FFFFFF"
+    readonly property color surfaceHi:     darkTheme ? "#1B1E29" : "#E8EDF5"
+    readonly property color surfaceSunk:   darkTheme ? "#0E1016" : "#E9EEF6"
+    readonly property color line:          darkTheme ? "#22252F" : "#D6DDE8"
+    readonly property color lineHi:        darkTheme ? "#2F3341" : "#BBC6D6"
 
     readonly property color accent:        "#7C5CFF"
     readonly property color accentSoft:    "#A78BFA"
@@ -53,9 +182,9 @@ ApplicationWindow {
     readonly property color success:       "#2DD4A7"
     readonly property color danger:        "#FF5A5F"
 
-    readonly property color txt:           "#F4F6FA"
-    readonly property color txtDim:        "#98A1B2"
-    readonly property color txtFaint:      "#5C6473"
+    readonly property color txt:           darkTheme ? "#F4F6FA" : "#1D2735"
+    readonly property color txtDim:        darkTheme ? "#98A1B2" : "#526174"
+    readonly property color txtFaint:      darkTheme ? "#5C6473" : "#758399"
 
     // Mono face for the wordmark. Resolved against the installed families
     // rather than set through font.families: that property makes the engine
@@ -116,6 +245,7 @@ ApplicationWindow {
         sparkle:    "M11 3l1.7 4.9L17.6 9.6 12.7 11.3 11 16.2 9.3 11.3 4.4 9.6 9.3 7.9z M18 15.4l.75 2.1 2.1.75-2.1.75-.75 2.1-.75-2.1-2.1-.75 2.1-.75z",
         swap:       "M4 8.5h13l-3.4-3.4 M20 15.5H7l3.4 3.4",
         power:      "M12 3.5v8 M6.6 6.6a7.6 7.6 0 1 0 10.8 0",
+         plus:       "M12 5v14 M5 12h14",
         bolt:       "M13.2 2.5L4.8 13.4h6.3l-1.3 8.1 8.4-10.9h-6.3z",
         bluetooth:  "M7.5 7.5L16.5 13.4 12 17V3.6l4.5 3.6-9 6",
         chevron:    "M5 9l7 7 7-7",
@@ -346,7 +476,7 @@ ApplicationWindow {
         checked: confirmedChecked
         Connections {
             target: controller
-            function onStateChanged() { sw.checked = Qt.binding(function() { return sw.confirmedChecked }) }
+            function onStateChanged() { if (!controller.busy && !sw.pressed) sw.checked = Qt.binding(function() { return sw.confirmedChecked }) }
         }
         implicitWidth: 50
         implicitHeight: 28
@@ -383,7 +513,7 @@ ApplicationWindow {
         value: confirmedValue
         Connections {
             target: controller
-            function onStateChanged() { sl.value = Qt.binding(function() { return sl.confirmedValue }) }
+            function onStateChanged() { if (!controller.busy && !sl.pressed) sl.value = Qt.binding(function() { return sl.confirmedValue }) }
         }
         implicitHeight: 26
         hoverEnabled: true
@@ -461,7 +591,7 @@ ApplicationWindow {
             value: band.value
             Connections {
                 target: controller
-                function onStateChanged() { vs.value = Qt.binding(function() { return band.value }) }
+                function onStateChanged() { if (!controller.busy && !vs.pressed) vs.value = Qt.binding(function() { return band.value }) }
             }
             implicitWidth: 34
             hoverEnabled: true
@@ -577,7 +707,8 @@ ApplicationWindow {
         Rectangle {
             Layout.fillHeight: true
             Layout.preferredWidth: 258
-            color: Qt.rgba(0.05, 0.055, 0.075, 0.72)
+            color: window.darkTheme ? Qt.rgba(0.05, 0.055, 0.075, 0.72)
+                                    : Qt.rgba(1.0, 1.0, 1.0, 0.86)
 
             Rectangle {
                 anchors.right: parent.right
@@ -649,7 +780,7 @@ ApplicationWindow {
                                     ctx.lineWidth = 3.5
                                     ctx.lineCap = "round"
 
-                                    ctx.strokeStyle = "#22252F"
+                                    ctx.strokeStyle = window.line
                                     ctx.beginPath()
                                     ctx.arc(cx, cy, r, 0, Math.PI * 2)
                                     ctx.stroke()
@@ -672,7 +803,7 @@ ApplicationWindow {
                                 weight: 2
 
                                 SequentialAnimation on opacity {
-                                    running: controller.isCharging
+                                    running: window.visible && window.visibility !== Window.Minimized && controller.isCharging
                                     loops: Animation.Infinite
                                     NumberAnimation { to: 0.35; duration: 900; easing.type: Easing.InOutQuad }
                                     NumberAnimation { to: 1.0; duration: 900; easing.type: Easing.InOutQuad }
@@ -711,15 +842,16 @@ ApplicationWindow {
                                     color: controller.connected ? window.success : window.danger
 
                                     SequentialAnimation on opacity {
-                                        running: controller.connected
+                                        running: window.visible && window.visibility !== Window.Minimized && controller.connected
                                         loops: Animation.Infinite
                                         NumberAnimation { to: 0.3; duration: 1100; easing.type: Easing.InOutQuad }
                                         NumberAnimation { to: 1.0; duration: 1100; easing.type: Easing.InOutQuad }
                                     }
                                 }
                                 Text {
+                                    objectName: "headsetConnectionStatus"
                                     textFormat: Text.PlainText
-                                    text: controller.connected ? window.tr("connected") : window.tr("disconnected")
+                                    text: controller.connectionLabel
                                     color: controller.connected ? window.txtDim : window.txtFaint
                                     font.pixelSize: 11
                                 }
@@ -867,7 +999,7 @@ ApplicationWindow {
         // CONTENT
         // ------------------------------------------------------
         StackLayout {
-            enabled: !controller.busy
+            enabled: true
             Layout.fillWidth: true
             Layout.fillHeight: true
             currentIndex: window.navIndex
@@ -888,7 +1020,7 @@ ApplicationWindow {
 
                         ColumnLayout {
                             spacing: 5
-                            Eyebrow { text: controller.connected ? "Connected Device" : "Offline" }
+                            Eyebrow { text: controller.connected ? window.tr("overview_connected_device") : window.tr("overview_offline") }
                             Text {
                                 textFormat: Text.PlainText
                                 text: controller.deviceName
@@ -904,10 +1036,10 @@ ApplicationWindow {
                         // Compact status chips
                         Repeater {
                             model: [
-                                { k: "Codec", v: controller.codec },
-                                { k: "Battery", v: controller.batteryLevel >= 0 ? controller.batteryLevel + "%" : "Unknown" },
-                                { k: "Mode", v: controller.noiseControlMode === "unknown" ? "Unknown" : controller.noiseControlMode === "cancelling" ? "ANC"
-                                              : controller.noiseControlMode === "ambient" ? "Ambient" : "Off" }
+                                { k: window.tr("stat_codec"), v: controller.codec },
+                                { k: window.tr("stat_battery"), v: controller.batteryLevel >= 0 ? controller.batteryLevel + "%" : window.tr("unknown") },
+                                { k: window.tr(controller.connected ? "stat_mode" : "stat_last_mode"), v: controller.noiseControlMode === "unknown" ? window.tr("unknown") : controller.noiseControlMode === "cancelling" ? window.tr("mode_anc")
+                                              : controller.noiseControlMode === "ambient" ? window.tr("mode_ambient") : window.tr("mode_off") }
                             ]
 
                             delegate: Rectangle {
@@ -992,7 +1124,7 @@ ApplicationWindow {
                                         visible: live
 
                                         SequentialAnimation {
-                                            running: auraRing.live
+                                            running: window.visible && window.visibility !== Window.Minimized && window.navIndex === 0 && auraRing.live
                                             loops: Animation.Infinite
                                             PauseAnimation { duration: auraRing.index * 700 }
                                             ParallelAnimation {
@@ -1029,6 +1161,10 @@ ApplicationWindow {
                                     anchors.fill: parent
                                     fillMode: Image.PreserveAspectFit
                                     source: "../" + controller.heroImagePath
+                                    sourceSize.width: Math.ceil(width * Screen.devicePixelRatio * 1.06)
+                                    sourceSize.height: Math.ceil(height * Screen.devicePixelRatio * 1.06)
+                                    asynchronous: true
+                                    cache: true
                                     opacity: controller.connected ? 1.0 : 0.35
                                     scale: heroHover.hovered ? 1.06 : 1.0
 
@@ -1043,9 +1179,9 @@ ApplicationWindow {
                                 textFormat: Text.PlainText
                                 Layout.alignment: Qt.AlignHCenter
                                 Layout.topMargin: 10
-                                text: controller.noiseControlMode === "unknown" ? "Unknown" : controller.noiseControlMode === "cancelling" ? "Noise Cancelling"
-                                    : controller.noiseControlMode === "ambient" ? "Ambient Sound"
-                                    : "Processing Off"
+                                text: controller.noiseControlMode === "unknown" ? window.tr("unknown") : controller.noiseControlMode === "cancelling" ? window.tr("noise_cancelling")
+                                    : controller.noiseControlMode === "ambient" ? window.tr("ambient_sound")
+                                    : window.tr("processing_off")
                                 color: window.txt
                                 font.pixelSize: 18
                                 font.weight: Font.DemiBold
@@ -1056,9 +1192,9 @@ ApplicationWindow {
                                 textFormat: Text.PlainText
                                 Layout.alignment: Qt.AlignHCenter
                                 Layout.topMargin: 2
-                                text: controller.noiseControlMode === "unknown" ? "Unknown" : controller.noiseControlMode === "cancelling" ? "The outside world is sealed out"
-                                    : controller.noiseControlMode === "ambient" ? "Level " + controller.ambientLevel + " · hearing your surroundings"
-                                    : "Straight signal, no processing"
+                                text: controller.noiseControlMode === "unknown" ? window.tr("unknown") : controller.noiseControlMode === "cancelling" ? window.tr("noise_cancelling_desc")
+                                    : controller.noiseControlMode === "ambient" ? window.trFormat("ambient_sound_desc", [controller.ambientLevel])
+                                    : window.tr("processing_off_desc")
                                 color: window.txtFaint
                                 font.pixelSize: 12
                             }
@@ -1070,7 +1206,7 @@ ApplicationWindow {
                                 spacing: 11
 
                                 PillButton {
-                                    text: "Noise Cancelling"
+                                    text: window.tr("noise_cancelling")
                                     glyphPath: window.icons.shield
                                     tint: window.accent
                                     active: controller.noiseControlMode === "cancelling"
@@ -1078,7 +1214,7 @@ ApplicationWindow {
                                 }
 
                                 PillButton {
-                                    text: "Ambient"
+                                    text: window.tr("ambient")
                                     glyphPath: window.icons.mic
                                     tint: window.ambientWarm
                                     active: controller.noiseControlMode === "ambient"
@@ -1086,11 +1222,20 @@ ApplicationWindow {
                                 }
 
                                 PillButton {
-                                    text: "Off"
+                                    text: window.tr("noise_control_off")
                                     glyphPath: window.icons.power
                                     tint: window.txtDim
                                     active: controller.noiseControlMode === "off"
                                     onClicked: controller.setNoiseControlOff()
+                                }
+
+                                PillButton {
+                                    visible: controller.hasPowerOff
+                                    text: window.tr("power_off")
+                                    glyphPath: window.icons.power
+                                    tint: window.danger
+                                    enabled: controller.connected
+                                    onClicked: controller.powerOff()
                                 }
                             }
 
@@ -1099,7 +1244,7 @@ ApplicationWindow {
                                 Layout.alignment: Qt.AlignHCenter
                                 Layout.topMargin: 12
                                 compact: true
-                                text: "EQ · " + controller.equalizerPresetName
+                                text: window.tr("eq_prefix") + " · " + window.equalizerDisplayName()
                                 glyphPath: window.icons.sliders
                                 onClicked: window.navIndex = 2
                             }
@@ -1119,10 +1264,10 @@ ApplicationWindow {
 
                     ColumnLayout {
                         spacing: 5
-                        Eyebrow { text: "Isolation" }
+                        Eyebrow { text: window.tr("isolation") }
                         Text {
                             textFormat: Text.PlainText
-                            text: "Noise Control"
+                            text: window.tr("noise_control")
                             color: window.txt
                             font.pixelSize: 28
                             font.weight: Font.DemiBold
@@ -1130,7 +1275,7 @@ ApplicationWindow {
                         }
                         Text {
                             textFormat: Text.PlainText
-                            text: "Choose how much of the world gets through."
+                            text: window.tr("noise_control_subtitle")
                             color: window.txtDim
                             font.pixelSize: 13
                         }
@@ -1144,9 +1289,9 @@ ApplicationWindow {
 
                         Repeater {
                             model: [
-                                { mode: "cancelling", label: "Noise Cancelling", glyph: window.icons.shield, desc: "Seal out the room", tint: window.accent },
-                                { mode: "ambient",    label: "Ambient Sound",    glyph: window.icons.mic,    desc: "Let the room in",   tint: window.ambientWarm },
-                                { mode: "off",        label: "Off",              glyph: window.icons.power,  desc: "No processing",     tint: window.txtDim }
+                                { mode: "cancelling", label: window.tr("noise_cancelling"), glyph: window.icons.shield, desc: window.tr("seal_out_room"), tint: window.accent },
+                                { mode: "ambient",    label: window.tr("ambient_sound"),    glyph: window.icons.mic,    desc: window.tr("let_room_in"),   tint: window.ambientWarm },
+                                { mode: "off",        label: window.tr("noise_control_off"), glyph: window.icons.power,  desc: window.tr("no_processing"),     tint: window.txtDim }
                             ]
 
                             delegate: Card {
@@ -1263,10 +1408,10 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 ColumnLayout {
                                     spacing: 2
-                                    Eyebrow { text: "Ambient" }
+                                    Eyebrow { text: window.tr("ambient") }
                                     Text {
                                         textFormat: Text.PlainText
-                                        text: "Sound Level"
+                                        text: window.tr("sound_level")
                                         color: window.txt
                                         font.pixelSize: 15
                                         font.weight: Font.DemiBold
@@ -1307,14 +1452,14 @@ ApplicationWindow {
                                     spacing: 2
                                     Text {
                                         textFormat: Text.PlainText
-                                        text: "Focus on Voice"
+                                        text: window.tr("focus_on_voice")
                                         color: window.txt
                                         font.pixelSize: 13
                                         font.weight: Font.Medium
                                     }
                                     Text {
                                         textFormat: Text.PlainText
-                                        text: "Lift human speech, filter the low rumble"
+                                        text: window.tr("focus_on_voice_desc")
                                         color: window.txtFaint
                                         font.pixelSize: 11
                                     }
@@ -1343,10 +1488,10 @@ ApplicationWindow {
 
                     ColumnLayout {
                         spacing: 5
-                        Eyebrow { text: "Signature" }
+                        Eyebrow { text: window.tr("signature") }
                         Text {
                             textFormat: Text.PlainText
-                            text: "Equalizer"
+                            text: window.tr("equalizer")
                             color: window.txt
                             font.pixelSize: 28
                             font.weight: Font.DemiBold
@@ -1354,33 +1499,38 @@ ApplicationWindow {
                         }
                         Text {
                             textFormat: Text.PlainText
-                            text: controller.tenBandEqualizer ? "Ten bands, fine-grained."
-                                  : "Five bands, plus dedicated Clear Bass."
+                            text: controller.tenBandEqualizer ? window.tr("eq_10band_desc")
+                                  : window.tr("eq_5band_desc")
                             color: window.txtDim
                             font.pixelSize: 13
                         }
                     }
 
-                    // Presets — wrapping flow, not ten crushed columns
+                    // Built-in presets. Custom presets live in My presets below.
                     Flow {
                         Layout.fillWidth: true
                         spacing: 8
 
+                        PillButton {
+                            compact: true
+                            text: window.tr("preset_off")
+                            glyphPath: window.icons.power
+                            tint: window.txtDim
+                            active: controller.equalizerPreset === 0x00
+                            enabled: controller.connected && controller.hasEqualizer
+                            onClicked: controller.setEqualizerPreset(0x00)
+                        }
+
                         Repeater {
-                            model: controller.tenBandEqualizer ? [
-                                { id: 0x00, name: "Off" },
-                                { id: 0xa0, name: "Custom" }
-                            ] : [
-                                { id: 0x00, name: "Off" },
-                                { id: 0x16, name: "Bass Boost" },
-                                { id: 0x15, name: "Treble Boost" },
-                                { id: 0x14, name: "Vocal" },
-                                { id: 0x10, name: "Bright" },
-                                { id: 0x11, name: "Excited" },
-                                { id: 0x12, name: "Mellow" },
-                                { id: 0x13, name: "Relaxed" },
-                                { id: 0x17, name: "Speech" },
-                                { id: 0xa0, name: "Custom" }
+                            model: controller.tenBandEqualizer ? [] : [
+                                { id: 0x16, key: "preset_bass_boost" },
+                                { id: 0x15, key: "preset_treble_boost" },
+                                { id: 0x14, key: "preset_vocal" },
+                                { id: 0x10, key: "preset_bright" },
+                                { id: 0x11, key: "preset_excited" },
+                                { id: 0x12, key: "preset_mellow" },
+                                { id: 0x13, key: "preset_relaxed" },
+                                { id: 0x17, key: "preset_speech" }
                             ]
 
                             delegate: Rectangle {
@@ -1412,11 +1562,154 @@ ApplicationWindow {
                                     textFormat: Text.PlainText
                                     id: chipText
                                     anchors.centerIn: parent
-                                    text: chip.modelData.name
+                                    text: window.tr(chip.modelData.key)
                                     color: chip.current ? window.txt : window.txtDim
                                     font.pixelSize: 12
                                     font.weight: chip.current ? Font.DemiBold : Font.Normal
                                     Behavior on color { ColorAnimation { duration: window.tFast } }
+                                }
+                            }
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+                        Eyebrow { text: window.tr("my_presets") }
+                        Item { Layout.fillWidth: true }
+                        PillButton {
+                            compact: true
+                            glyphPath: window.icons.plus
+                            text: window.tr("save_current")
+                            enabled: controller.connected && controller.hasEqualizer
+                            onClicked: {
+                                window.presetDialogMode = "save"
+                                window.pendingPresetId = -1
+                                equalizerPresetDialog.open()
+                            }
+                        }
+                    }
+
+                    Flow {
+                        Layout.fillWidth: true
+                        spacing: 8
+                        visible: (controller.connected && controller.hasEqualizer) || controller.equalizerPresets.length > 0
+
+                        Rectangle {
+                            id: currentCustomPresetCard
+                            visible: controller.connected && controller.hasEqualizer
+                            implicitWidth: Math.max(180, currentCustomPresetRow.implicitWidth + 20)
+                            implicitHeight: 42
+                            radius: 12
+                            color: controller.equalizerPreset === 0xa0
+                                   ? Qt.rgba(window.accent.r, window.accent.g, window.accent.b, 0.18)
+                                   : window.surface
+                            border.width: 1
+                            border.color: controller.equalizerPreset === 0xa0
+                                         ? Qt.rgba(window.accent.r, window.accent.g, window.accent.b, 0.7)
+                                         : window.line
+
+                            RowLayout {
+                                id: currentCustomPresetRow
+                                anchors.fill: parent
+                                anchors.leftMargin: 12
+                                anchors.rightMargin: 12
+                                spacing: 8
+                                Text {
+                                    Layout.fillWidth: true
+                                    textFormat: Text.PlainText
+                                    text: window.tr("preset_custom")
+                                    color: window.txt
+                                    font.pixelSize: 12
+                                    font.weight: Font.DemiBold
+                                }
+                            }
+
+                            TapHandler {
+                                onTapped: controller.setEqualizerCustom(controller.clearBass, controller.equalizerBands)
+                            }
+                        }
+
+                        Repeater {
+                            model: controller.equalizerPresets
+                            delegate: Rectangle {
+                                id: customPresetCard
+                                required property var modelData
+                                implicitWidth: Math.max(250, customPresetRow.implicitWidth + 20)
+                                implicitHeight: 42
+                                radius: 12
+                                color: controller.activeCustomEqualizerPresetId === modelData.id
+                                       ? Qt.rgba(window.accent.r, window.accent.g, window.accent.b, 0.18)
+                                       : window.surface
+                                border.width: 1
+                                border.color: controller.activeCustomEqualizerPresetId === modelData.id
+                                             ? Qt.rgba(window.accent.r, window.accent.g, window.accent.b, 0.7)
+                                             : window.line
+
+                                RowLayout {
+                                    id: customPresetRow
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 12
+                                    anchors.rightMargin: 8
+                                    spacing: 8
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        textFormat: Text.PlainText
+                                        text: customPresetCard.modelData.name
+                                        color: window.txt
+                                        font.pixelSize: 12
+                                        font.weight: Font.DemiBold
+                                        elide: Text.ElideRight
+                                    }
+
+                                    ToolButton {
+                                        implicitWidth: 30
+                                        implicitHeight: 30
+                                        text: "✎"
+                                        onClicked: {
+                                            window.presetDialogMode = "rename"
+                                            window.pendingPresetId = customPresetCard.modelData.id
+                                            equalizerPresetDialog.open()
+                                        }
+                                        contentItem: Text {
+                                            textFormat: Text.PlainText
+                                            text: "✎"
+                                            color: window.accentSoft
+                                            horizontalAlignment: Text.AlignHCenter
+                                            verticalAlignment: Text.AlignVCenter
+                                        }
+                                        background: Rectangle {
+                                            radius: 8
+                                            color: parent.hovered ? window.surfaceHi : "transparent"
+                                        }
+                                    }
+
+                                    ToolButton {
+                                        implicitWidth: 30
+                                        implicitHeight: 30
+                                        text: "×"
+                                        onClicked: {
+                                            window.pendingPresetId = customPresetCard.modelData.id
+                                            deletePresetDialog.open()
+                                        }
+                                        contentItem: Text {
+                                            textFormat: Text.PlainText
+                                            text: "×"
+                                            color: window.danger
+                                            font.pixelSize: 18
+                                            horizontalAlignment: Text.AlignHCenter
+                                            verticalAlignment: Text.AlignVCenter
+                                        }
+                                        background: Rectangle {
+                                            radius: 8
+                                            color: parent.hovered ? window.surfaceHi : "transparent"
+                                        }
+                                    }
+                                }
+
+                                TapHandler {
+                                    onTapped: controller.applyEqualizerPreset(customPresetCard.modelData.id)
                                 }
                             }
                         }
@@ -1434,11 +1727,15 @@ ApplicationWindow {
 
                             RowLayout {
                                 Layout.fillWidth: true
-                                Eyebrow { text: controller.tenBandEqualizer ? "10-Band" : "5-Band · ±10 dB" }
+                                    Eyebrow {
+                                        text: controller.tenBandEqualizer
+                                            ? window.tr("eq_10band_label")
+                                            : window.tr("eq_5band_label")
+                                    }
                                 Item { Layout.fillWidth: true }
                                 Text {
                                     textFormat: Text.PlainText
-                                    text: controller.equalizerPresetName
+                                    text: window.equalizerDisplayName()
                                     color: window.accentSoft
                                     font.pixelSize: 12
                                     font.weight: Font.DemiBold
@@ -1521,14 +1818,14 @@ ApplicationWindow {
                                 spacing: 2
                                 Text {
                                     textFormat: Text.PlainText
-                                    text: "Clear Bass"
+                                     text: window.tr("clear_bass")
                                     color: window.txt
                                     font.pixelSize: 15
                                     font.weight: Font.DemiBold
                                 }
                                 Text {
                                     textFormat: Text.PlainText
-                                    text: "Sub-bass weight, no distortion"
+                                     text: window.tr("clear_bass_desc")
                                     color: window.txtFaint
                                     font.pixelSize: 11
                                 }
@@ -1573,10 +1870,10 @@ ApplicationWindow {
 
                     ColumnLayout {
                         spacing: 5
-                        Eyebrow { text: "Behaviour" }
+                        Eyebrow { text: window.tr("behaviour") }
                         Text {
                             textFormat: Text.PlainText
-                            text: "Sound & Device Features"
+                            text: window.tr("audio_features_title")
                             color: window.txt
                             font.pixelSize: 28
                             font.weight: Font.DemiBold
@@ -1584,7 +1881,7 @@ ApplicationWindow {
                         }
                         Text {
                             textFormat: Text.PlainText
-                            text: "Upscaling, speak-to-chat, and power discipline."
+                            text: window.tr("audio_features_subtitle")
                             color: window.txtDim
                             font.pixelSize: 13
                         }
@@ -1598,9 +1895,9 @@ ApplicationWindow {
 
                         Repeater {
                             model: [
-                                { key: "dsee",     title: "DSEE Extreme",    desc: "AI restores the highs that compression threw away", glyph: window.icons.sparkle },
-                                { key: "speak",    title: "Speak-to-Chat",   desc: "Pauses playback and opens ambient when you talk",   glyph: window.icons.mic },
-                                { key: "adaptive", title: "Adaptive Volume", desc: "Balances level against your surroundings",          glyph: window.icons.sliders }
+                                { key: "dsee",     title: window.tr("dsee_title"),     desc: window.tr("dsee_desc"),     glyph: window.icons.sparkle },
+                                { key: "speak",    title: window.tr("speak_title"),    desc: window.tr("speak_desc"),    glyph: window.icons.mic },
+                                { key: "adaptive", title: window.tr("adaptive_title"), desc: window.tr("adaptive_desc"), glyph: window.icons.sliders }
                             ]
 
                             delegate: Card {
@@ -1650,6 +1947,7 @@ ApplicationWindow {
                                         spacing: 3
                                         Text {
                                             textFormat: Text.PlainText
+                                            objectName: featCard.modelData.key + "Title"
                                             text: featCard.modelData.title
                                             color: window.txt
                                             font.pixelSize: 15
@@ -1658,7 +1956,8 @@ ApplicationWindow {
                                         Text {
                                             textFormat: Text.PlainText
                                             Layout.fillWidth: true
-                                            text: !featCard.supported ? "Not supported" : !featCard.known ? "State unknown — waiting for device" : featCard.modelData.desc
+                                            objectName: featCard.modelData.key + "Description"
+                                            text: !featCard.supported ? window.tr("not_supported") : !featCard.known ? window.tr("state_unknown") : featCard.modelData.desc
                                             color: window.txtFaint
                                             font.pixelSize: 11
                                             wrapMode: Text.WordWrap
@@ -1677,8 +1976,12 @@ ApplicationWindow {
                             }
                         }
 
-                        // Auto power-off — a choice, not a toggle
                         Card {
+                            id: autoPowerOffCard
+                            readonly property bool removalOnly: controller.hasWearSensor
+                                && controller.autoPowerOffOptions.length === 2
+                                && controller.autoPowerOffOptions.indexOf(0) >= 0
+                                && controller.autoPowerOffOptions.indexOf(5) >= 0
                             Layout.fillWidth: true
                             Layout.preferredHeight: 112
                             hovered: powerHover.hovered
@@ -1709,35 +2012,65 @@ ApplicationWindow {
                                     Layout.fillWidth: true
                                     spacing: 3
                                     Text {
+                                        objectName: "autoPowerOffTitle"
                                         textFormat: Text.PlainText
-                                        text: "Auto Power-Off"
+                                        text: window.tr("auto_power_off")
                                         color: window.txt
                                         font.pixelSize: 15
                                         font.weight: Font.DemiBold
                                     }
                                     Text {
+                                        objectName: "autoPowerOffDescription"
                                         textFormat: Text.PlainText
                                         Layout.fillWidth: true
-                                        text: "Shut down after idle or removal"
+                                        text: window.tr(autoPowerOffCard.removalOnly
+                                            ? "auto_power_off_removed_desc" : "auto_power_off_desc")
                                         color: window.txtFaint
                                         font.pixelSize: 11
                                         wrapMode: Text.WordWrap
                                     }
                                 }
 
+                                NeoSwitch {
+                                    objectName: "autoPowerOffSwitch"
+                                    visible: autoPowerOffCard.removalOnly
+                                    enabled: controller.connected
+                                        && controller.featureStatus.autoPowerOff
+                                        && controller.featureStatus.autoPowerOff.availability === "valid"
+                                    confirmedChecked: controller.autoPowerOff === 5
+                                    onToggled: controller.setAutoPowerOff(checked ? 5 : 0)
+                                }
+
                                 ComboBox {
                                     id: powerCombo
+                                    objectName: "autoPowerOffCombo"
+                                    visible: !autoPowerOffCard.removalOnly
                                     implicitWidth: 134
                                     implicitHeight: 38
-                                    model: ["Off", "5 Minutes", "15 Minutes", "30 Minutes", "1 Hour", "3 Hours"]
-                                    currentIndex: controller.featureStatus.autoPowerOff && controller.featureStatus.autoPowerOff.availability === "valid" ? controller.autoPowerOff : -1
-                                    Connections {
-                                        target: controller
-                                        function onStateChanged() { powerCombo.currentIndex = Qt.binding(function() {
-                                            return controller.featureStatus.autoPowerOff && controller.featureStatus.autoPowerOff.availability === "valid" ? controller.autoPowerOff : -1
-                                        }) }
+                                    readonly property var labels: [window.tr("preset_off"),
+                                        "5 " + window.tr("minutes"),
+                                        "30 " + window.tr("minutes"),
+                                        "1 " + window.tr("hour"),
+                                        "3 " + window.tr("hours"),
+                                        controller.hasWearSensor
+                                            ? window.tr("power_off_when_removed")
+                                            : "15 " + window.tr("minutes"),
+                                        "15 " + window.tr("minutes")]
+                                    model: controller.autoPowerOffOptions.map(function(value) {
+                                        return { value: value, label: powerCombo.labels[value] }
+                                    })
+                                    textRole: "label"
+                                    valueRole: "value"
+                                    enabled: controller.connected && count > 0
+                                    currentIndex: {
+                                        if (!controller.featureStatus.autoPowerOff ||
+                                            controller.featureStatus.autoPowerOff.availability !== "valid")
+                                            return -1
+                                        return controller.autoPowerOffOptions.indexOf(controller.autoPowerOff)
                                     }
-                                    onActivated: controller.setAutoPowerOff(index)
+                                    onActivated: function(index) {
+                                        controller.setAutoPowerOff(model[index].value)
+                                    }
 
                                     background: Rectangle {
                                         radius: 11
@@ -1802,7 +2135,7 @@ ApplicationWindow {
                                     spacing: 3
                                     Text {
                                         textFormat: Text.PlainText
-                                        text: "Power Off"
+                                        text: window.tr("power_off")
                                         color: window.txt
                                         font.pixelSize: 15
                                         font.weight: Font.DemiBold
@@ -1810,7 +2143,7 @@ ApplicationWindow {
                                     Text {
                                         textFormat: Text.PlainText
                                         Layout.fillWidth: true
-                                        text: "Turn off the connected headphones now"
+                                        text: window.tr("power_off_desc")
                                         color: window.txtFaint
                                         font.pixelSize: 11
                                         wrapMode: Text.WordWrap
@@ -1820,8 +2153,9 @@ ApplicationWindow {
                                 PillButton {
                                     tint: window.danger
                                     glyphPath: window.icons.power
-                                    text: "Power Off"
-                                    enabled: controller.connected && !controller.busy
+                                    text: window.tr("power_off")
+                                    objectName: "headsetPowerOffButton"
+                                    enabled: controller.connected
                                     onClicked: controller.powerOff()
                                 }
                             }
@@ -1836,17 +2170,23 @@ ApplicationWindow {
             // 5 · DEVICE SWITCHER
             // ==================================================
             ViewPage {
-                ColumnLayout {
+                ScrollView {
                     anchors.fill: parent
-                    anchors.margins: 36
-                    spacing: 22
+                    clip: true
+                    contentWidth: availableWidth
+
+                    ColumnLayout {
+                        width: Math.max(0, parent.width - 36)
+                        x: 18
+                        y: 18
+                        spacing: 22
 
                     ColumnLayout {
                         spacing: 5
-                        Eyebrow { text: "Easy Switch" }
+                        Eyebrow { text: window.tr("devices_eyebrow") }
                         Text {
                             textFormat: Text.PlainText
-                            text: "Paired Devices"
+                            text: window.tr("devices_title")
                             color: window.txt
                             font.pixelSize: 28
                             font.weight: Font.DemiBold
@@ -1854,7 +2194,7 @@ ApplicationWindow {
                         }
                         Text {
                             textFormat: Text.PlainText
-                            text: "Hand the connection to another set without re-pairing."
+                            text: window.tr("devices_subtitle")
                             color: window.txtDim
                             font.pixelSize: 13
                         }
@@ -1870,7 +2210,8 @@ ApplicationWindow {
                             delegate: Card {
                                 id: devCard
                                 required property var modelData
-                                readonly property bool current: modelData.name === controller.deviceName
+                                readonly property bool current: controller.connected
+                                    && String(modelData.address).toUpperCase() === controller.deviceAddress.toUpperCase()
 
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: 84
@@ -1943,19 +2284,236 @@ ApplicationWindow {
                                         Layout.preferredWidth: 132
                                         Layout.alignment: Qt.AlignVCenter
                                         implicitHeight: 40
-                                        text: devCard.current ? window.tr("active") : window.tr("connect")
-                                        glyphPath: devCard.current ? "" : window.icons.swap
+                                        text: devCard.current ? window.tr("disconnect") : window.tr("connect")
+                                        glyphPath: devCard.current ? window.icons.power : window.icons.swap
                                         active: devCard.current
-                                        enabled: !devCard.current
-                                        opacity: enabled ? 1.0 : 0.8
-                                        onClicked: controller.connectDevice(devCard.modelData.address, devCard.modelData.name)
+                                        enabled: true
+                                        tint: devCard.current ? window.danger : window.accent
+                                        onClicked: devCard.current
+                                                   ? controller.disconnectDevice()
+                                                   : controller.connectDevice(devCard.modelData.address, devCard.modelData.name)
                                     }
                                 }
                             }
                         }
                     }
 
-                    Item { Layout.fillHeight: true }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+                        Eyebrow { text: window.tr("discovered_devices") }
+                        Item { Layout.fillWidth: true }
+                        Text {
+                            textFormat: Text.PlainText
+                            text: window.trFormat("found", [controller.discoveredDevices.length])
+                            color: window.txtFaint
+                            font.pixelSize: 11
+                        }
+                        PillButton {
+                            compact: true
+                            glyphPath: window.icons.swap
+                            text: window.tr("refresh")
+                            enabled: true
+                            onClicked: controller.refreshDiscoveredDevices()
+                        }
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Repeater {
+                            model: controller.discoveredDevices
+                            delegate: Card {
+                                id: discoveredCard
+                                required property var modelData
+                                readonly property bool current: controller.connected
+                                    && String(modelData.address).toUpperCase() === controller.deviceAddress.toUpperCase()
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 68
+                                active: current
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 18
+                                    anchors.rightMargin: 18
+                                    spacing: 12
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 2
+                                        Text {
+                                            textFormat: Text.PlainText
+                                            text: discoveredCard.modelData.name
+                                            color: window.txt
+                                            font.pixelSize: 13
+                                            font.weight: Font.DemiBold
+                                        }
+                                        Text {
+                                            textFormat: Text.PlainText
+                                            text: discoveredCard.modelData.address
+                                            color: window.txtFaint
+                                            font.pixelSize: 11
+                                        }
+                                    }
+                                    PillButton {
+                                        compact: true
+                                        text: discoveredCard.current ? window.tr("disconnect") : window.tr("connect")
+                                        glyphPath: discoveredCard.current ? window.icons.power : window.icons.bluetooth
+                                        active: discoveredCard.current
+                                        enabled: true
+                                        tint: discoveredCard.current ? window.danger : window.accent
+                                        onClicked: discoveredCard.current
+                                                   ? controller.disconnectDevice()
+                                                   : controller.connectDevice(discoveredCard.modelData.address, discoveredCard.modelData.name)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+                        Eyebrow { text: window.tr("headset_multipoint") }
+                        Item { Layout.fillWidth: true }
+                        Text {
+                            textFormat: Text.PlainText
+                            text: controller.multipointSupported
+                                  ? window.trFormat("sources_max", [controller.multipointDevices.length, controller.maxConnected])
+                                  : window.tr("multipoint_not_supported")
+                            color: controller.multipointSupported ? window.txtDim : window.txtFaint
+                            font.pixelSize: 11
+                        }
+                        PillButton {
+                            compact: true
+                            glyphPath: window.icons.swap
+                            text: window.tr("refresh")
+                            enabled: controller.connected
+                            onClicked: controller.refreshMultipoint()
+                        }
+                    }
+
+                    Card {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 64
+                        visible: controller.multipointSupported
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 18
+                            anchors.rightMargin: 18
+                            spacing: 12
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2
+                                Text {
+                                    textFormat: Text.PlainText
+                                    text: window.tr("keep_source")
+                                    color: window.txt
+                                    font.pixelSize: 13
+                                    font.weight: Font.DemiBold
+                                }
+                                Text {
+                                    textFormat: Text.PlainText
+                                    text: controller.sourceKeepSupported
+                                          ? window.tr("source_remembered")
+                                          : window.tr("source_pinning_unsupported")
+                                    color: window.txtFaint
+                                    font.pixelSize: 11
+                                }
+                            }
+                            NeoSwitch {
+                                confirmedChecked: controller.sourceKeeping
+                                enabled: controller.sourceKeepSupported
+                                onToggled: controller.setMultipointSourceKeeping(checked)
+                            }
+                        }
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+                        visible: controller.multipointSupported
+                        Repeater {
+                            model: controller.multipointDevices
+                            delegate: Card {
+                                id: multipointCard
+                                required property var modelData
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 78
+                                active: multipointCard.modelData.playing
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 18
+                                    anchors.rightMargin: 18
+                                    spacing: 12
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 2
+                                        Text {
+                                            textFormat: Text.PlainText
+                                            text: multipointCard.modelData.name
+                                            color: window.txt
+                                            font.pixelSize: 13
+                                            font.weight: Font.DemiBold
+                                        }
+                                        Text {
+                                            textFormat: Text.PlainText
+                                            text: (multipointCard.modelData.playing ? window.tr("playing") + " · " :
+                                                   multipointCard.modelData.connected ? window.tr("connected") + " · " : window.tr("paired_history") + " · ")
+                                                  + multipointCard.modelData.address
+                                            color: multipointCard.modelData.playing ? window.success : window.txtFaint
+                                            font.pixelSize: 11
+                                        }
+                                    }
+                                    PillButton {
+                                        compact: true
+                                        text: multipointCard.modelData.connected
+                                              ? (controller.sourceKeeping ? window.tr("set_default") : window.tr("play_here"))
+                                              : window.tr("connect")
+                                        glyphPath: window.icons.swap
+                                        active: multipointCard.modelData.playing
+                                        enabled: true &&
+                                                 (multipointCard.modelData.connected
+                                                  ? controller.sourceSwitchSupported
+                                                  : true)
+                                        onClicked: multipointCard.modelData.connected
+                                                   ? (controller.sourceKeeping
+                                                      ? controller.setMultipointDefault(multipointCard.modelData.address)
+                                                      : controller.switchMultipointSource(multipointCard.modelData.address))
+                                                   : controller.multipointConnect(multipointCard.modelData.address)
+                                    }
+                                    PillButton {
+                                        compact: true
+                                        text: multipointCard.modelData.connected ? window.tr("disconnect") : window.tr("unpair")
+                                        glyphPath: window.icons.power
+                                        tint: window.danger
+                                        enabled: true
+                                        onClicked: {
+                                            if (multipointCard.modelData.connected) {
+                                                controller.multipointDisconnect(multipointCard.modelData.address)
+                                            } else {
+                                                window.pendingUnpairAddress = multipointCard.modelData.address
+                                                window.pendingUnpairName = multipointCard.modelData.name
+                                                unpairDialog.open()
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        visible: controller.multipointError.length > 0
+                        textFormat: Text.PlainText
+                        text: controller.multipointError
+                        color: window.danger
+                        font.pixelSize: 12
+                        wrapMode: Text.WordWrap
+                    }
+
+                        Item { Layout.fillHeight: true }
+                    }
                 }
             }
 
@@ -1973,6 +2531,7 @@ ApplicationWindow {
                         Eyebrow { text: window.tr("settings_eyebrow") }
                         Text {
                             textFormat: Text.PlainText
+                            objectName: "settingsTitle"
                             text: window.tr("settings_title")
                             color: window.txt
                             font.pixelSize: 28
@@ -1990,7 +2549,7 @@ ApplicationWindow {
                     // Card 1: System & Interface Preferences
                     Card {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 180
+                        Layout.preferredHeight: 278
 
                         ColumnLayout {
                             anchors.fill: parent
@@ -2089,6 +2648,7 @@ ApplicationWindow {
 
                                 ComboBox {
                                     id: langCombo
+                                    objectName: "languageCombo"
                                     implicitWidth: 168
                                     implicitHeight: 38
                                     model: controller.availableLanguages
@@ -2103,7 +2663,7 @@ ApplicationWindow {
                                         return 0
                                     }
 
-                                    onActivated: {
+                                    onActivated: function(index) {
                                         var item = model[index]
                                         if (item && item.code) {
                                             controller.setLanguage(item.code)
@@ -2195,6 +2755,132 @@ ApplicationWindow {
                                     }
                                 }
                             }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                height: 1
+                                color: window.line
+                            }
+
+                            // Row 3: Theme selector
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 16
+
+                                Rectangle {
+                                    Layout.preferredWidth: 38
+                                    Layout.preferredHeight: 38
+                                    radius: 11
+                                    color: Qt.rgba(window.accent.r, window.accent.g, window.accent.b, 0.14)
+                                    border.width: 1
+                                    border.color: Qt.rgba(window.accent.r, window.accent.g, window.accent.b, 0.35)
+
+                                    Glyph {
+                                        anchors.centerIn: parent
+                                        path: window.icons.sparkle
+                                        size: 18
+                                        color: window.accentSoft
+                                    }
+                                }
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 3
+                                    Text {
+                                        textFormat: Text.PlainText
+                                        text: window.tr("theme")
+                                        color: window.txt
+                                        font.pixelSize: 14
+                                        font.weight: Font.DemiBold
+                                    }
+                                    Text {
+                                        textFormat: Text.PlainText
+                                        text: window.tr("theme_desc")
+                                        color: window.txtDim
+                                        font.pixelSize: 12
+                                    }
+                                }
+
+                                ComboBox {
+                                    id: themeCombo
+                                    implicitWidth: 168
+                                    implicitHeight: 38
+                                    model: [
+                                        { code: "dark", name: window.tr("dark_theme") },
+                                        { code: "light", name: window.tr("light_theme") }
+                                    ]
+                                    textRole: "name"
+                                    valueRole: "code"
+                                    currentIndex: controller.darkTheme ? 0 : 1
+                                    onActivated: controller.setDarkTheme(index === 0)
+
+                                    background: Rectangle {
+                                        radius: 11
+                                        color: themeCombo.hovered ? window.surfaceHi : window.surfaceSunk
+                                        border.width: 1
+                                        border.color: themeCombo.hovered ? window.lineHi : window.line
+                                        Behavior on color { ColorAnimation { duration: window.tFast } }
+                                    }
+
+                                    contentItem: Text {
+                                        textFormat: Text.PlainText
+                                        leftPadding: 14
+                                        rightPadding: 28
+                                        text: themeCombo.displayText
+                                        color: window.txt
+                                        font.pixelSize: 13
+                                        font.weight: Font.Medium
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+
+                                    indicator: Glyph {
+                                        x: themeCombo.width - width - 12
+                                        y: themeCombo.height / 2 - height / 2
+                                        size: 14
+                                        color: window.txtFaint
+                                        path: window.icons.chevron
+                                        rotation: themeCombo.popup.visible ? 180 : 0
+                                    }
+
+                                    popup: Popup {
+                                        y: themeCombo.height + 4
+                                        width: themeCombo.width
+                                        implicitHeight: contentItem.implicitHeight + 12
+                                        padding: 6
+                                        background: Rectangle {
+                                            radius: 12
+                                            color: window.surface
+                                            border.width: 1
+                                            border.color: window.lineHi
+                                        }
+                                        contentItem: ListView {
+                                            implicitHeight: contentHeight
+                                            model: themeCombo.popup.visible ? themeCombo.delegateModel : null
+                                            currentIndex: themeCombo.highlightedIndex
+                                        }
+                                    }
+
+                                    delegate: ItemDelegate {
+                                        id: themeDel
+                                        width: themeCombo.width - 12
+                                        implicitHeight: 36
+                                        highlighted: themeCombo.highlightedIndex === index
+                                        hoverEnabled: true
+                                        background: Rectangle {
+                                            radius: 8
+                                            color: themeDel.highlighted ? window.surfaceHi : "transparent"
+                                        }
+                                        contentItem: Text {
+                                            textFormat: Text.PlainText
+                                            text: modelData.name
+                                            color: (index === themeCombo.currentIndex) ? window.accentSoft : window.txt
+                                            font.pixelSize: 13
+                                            verticalAlignment: Text.AlignVCenter
+                                            leftPadding: 8
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -2270,7 +2956,7 @@ ApplicationWindow {
 
                                     ColumnLayout {
                                         spacing: 2
-                                        Eyebrow { text: "Protocol Core" }
+                                        Eyebrow { text: window.tr("protocol_core") }
                                         Text {
                                             textFormat: Text.PlainText
                                             text: "MDR V1 & V2 (C++20)"
@@ -2282,7 +2968,7 @@ ApplicationWindow {
 
                                     ColumnLayout {
                                         spacing: 2
-                                        Eyebrow { text: "Framework" }
+                                        Eyebrow { text: window.tr("framework") }
                                         Text {
                                             textFormat: Text.PlainText
                                             text: "Qt 6 Quick / QML"
@@ -2294,7 +2980,7 @@ ApplicationWindow {
 
                                     ColumnLayout {
                                         spacing: 2
-                                        Eyebrow { text: "License" }
+                                        Eyebrow { text: window.tr("license") }
                                         Text {
                                             textFormat: Text.PlainText
                                             text: "MIT Open Source"
@@ -2347,7 +3033,7 @@ ApplicationWindow {
                                         }
                                         Text {
                                             textFormat: Text.PlainText
-                                            text: "Project links"
+                                            text: window.tr("project_links")
                                             color: window.txtDim
                                             font.pixelSize: 12
                                         }

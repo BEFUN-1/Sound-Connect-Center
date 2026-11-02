@@ -40,6 +40,7 @@ public:
 
     virtual int getAutoPowerOff() = 0;
     virtual void setAutoPowerOff(int index) = 0;
+    virtual std::vector<int> getAutoPowerOffOptions() { return {}; }
 
     virtual bool getSpeakToChat() = 0;
     virtual void setSpeakToChat(bool enabled) = 0;
@@ -56,6 +57,7 @@ public:
     virtual MultipointState getMultipoint() {
         throw SonyException(SonyErrorCode::Unsupported, "Multipoint is not supported by this protocol");
     }
+    virtual void useMultipointPreflight(const MultipointState&) {}
     virtual void switchMultipointSource(std::string_view) {
         throw SonyException(SonyErrorCode::Unsupported, "Multipoint source switching is not supported");
     }

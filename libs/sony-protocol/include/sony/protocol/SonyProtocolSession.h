@@ -24,9 +24,12 @@ namespace sony::protocol {
 class SonyProtocolSession {
 public:
     using NotificationCallback = std::function<void(const SonyFrame&)>;
+    enum class ReplyPolicy { BufferedCompatibility, FreshOnly };
 
-    explicit SonyProtocolSession(std::unique_ptr<transport::ITransport> transport);
-    explicit SonyProtocolSession(transport::ITransport* transport);
+    explicit SonyProtocolSession(std::unique_ptr<transport::ITransport> transport,
+        ReplyPolicy replyPolicy = ReplyPolicy::BufferedCompatibility);
+    explicit SonyProtocolSession(transport::ITransport* transport,
+        ReplyPolicy replyPolicy = ReplyPolicy::BufferedCompatibility);
     ~SonyProtocolSession();
 
     SonyProtocolSession(const SonyProtocolSession&) = delete;
@@ -50,6 +53,8 @@ public:
 
     // Register a callback for unsolicited notifications
     void onNotification(NotificationCallback callback);
+    void beforeRequest(std::function<void()> callback) { _beforeRequest = std::move(callback); }
+    void waitForRetry(std::chrono::milliseconds delay);
 
     // Sequence management
     [[nodiscard]] uint8_t nextSequenceNumber() noexcept;
@@ -73,6 +78,7 @@ private:
 
     std::unique_ptr<transport::ITransport> _ownedTransport;
     transport::ITransport* _transport{nullptr};
+    ReplyPolicy _replyPolicy;
 
     std::atomic<bool> _running{false};
     std::atomic<bool> _healthy{false};
@@ -109,6 +115,7 @@ private:
     std::condition_variable _ackCv;
 
     std::vector<NotificationCallback> _notificationCallbacks;
+    std::function<void()> _beforeRequest;
 
     // Last seen incoming sequence for duplicate detection
     std::optional<uint8_t> _lastSeenDataSeq;

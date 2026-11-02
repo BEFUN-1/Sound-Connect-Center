@@ -8,7 +8,6 @@ runs work without network access. Bluetooth hardware is not required.
 Run these commands from the repository root:
 
 ```sh
-git submodule update --init --recursive
 docker build -t sony-device-center-tests -f tests/container/Dockerfile tests/container
 docker run --rm --network=none \
     -v "$PWD:/src:ro" -v sony-device-center-build:/build \
