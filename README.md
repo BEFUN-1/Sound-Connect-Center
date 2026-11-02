@@ -4,11 +4,11 @@
 
 Sony Device Center 是一个独立的开源耳机控制项目，提供 Qt 6 / QML 桌面界面、`sonyctl` 命令行工具、`sonyd` 后台服务，以及可复用的 C++20 蓝牙与协议库。无需登录 Sony 账号。
 
-[下载 2.0.6 开发预览版](https://github.com/BEFUN-1/Sound-Connect-Center/releases/tag/v2.0.6-dev) · [English](README.en.md) · [使用指南](docs/getting-started.md) · [文档导航](docs/README.md)
+[下载 2.0.6 正式版](https://github.com/BEFUN-1/Sound-Connect-Center/releases/tag/v2.0.6) · [English](README.en.md) · [使用指南](docs/getting-started.md) · [文档导航](docs/README.md)
 
 ![Sony Device Center 2.0.6 中文概览，使用模拟 WH-1000XM6 数据](docs/screenshots/v2.0.6/overview.png)
 
-> 当前下载为 **Windows x64 / 2.0.6-dev / 未签名 Development 预发布**，发布日期为 2026-11-02。它是开发验证包，功能与兼容性仍在完善。界面截图使用模拟耳机和隔离设置生成，不包含真实蓝牙地址、配对设备名称、账户或桌面内容；截图不代表所有功能都经过真机验证。
+> 当前下载为 **Windows x64 / 2.0.6 正式版**，发布日期为 2026-11-02。维护者已验证本次安装文件并确认正式发布；安装包尚未进行 Authenticode 签名。界面截图使用模拟耳机和隔离设置生成，不包含真实蓝牙地址、配对设备名称、账户或桌面内容；截图不代表所有功能都经过真机验证。
 
 ## 可以做什么
 
@@ -38,16 +38,16 @@ Sony Device Center 是一个独立的开源耳机控制项目，提供 Qt 6 / QM
 
 ## 下载与开始使用
 
-1. 打开 [2.0.6-dev Release](https://github.com/BEFUN-1/Sound-Connect-Center/releases/tag/v2.0.6-dev)，下载 `SonyDeviceCenter-Qt2-2.0.6-dev-Setup.exe`。
+1. 打开 [2.0.6 Release](https://github.com/BEFUN-1/Sound-Connect-Center/releases/tag/v2.0.6)，下载 `SonyDeviceCenter-Qt2-2.0.6-Setup.exe`。
 2. 在 Windows 蓝牙设置中先配对并连接耳机。升级前从托盘菜单退出旧版程序。
 3. 以普通用户身份运行安装器。安装器使用固定的当前用户目录，不需要管理员权限，不接受自定义 `/D` 安装位置。
 4. 启动 Sony Device Center，在“设备与多点”页面选择耳机。之后保存目标耳机，不会因为目标不可用就自动连接另一副。
 5. 关闭窗口会收起到托盘；完全退出请使用托盘菜单。
 
-安装包已包含 Qt 与编译器运行库，无需另装 Qt 或 .NET。包未进行 Authenticode 签名；请核对发布页的文件名、预发布标识和 SHA-256，不要为运行本项目关闭系统安全保护。
+安装包已包含 Qt 与编译器运行库，无需另装 Qt 或 .NET。包未进行 Authenticode 签名；请核对发布页的文件名和 SHA-256，不要为运行本项目关闭系统安全保护。
 
 ```powershell
-Get-FileHash .\SonyDeviceCenter-Qt2-2.0.6-dev-Setup.exe -Algorithm SHA256
+Get-FileHash .\SonyDeviceCenter-Qt2-2.0.6-Setup.exe -Algorithm SHA256
 ```
 
 本次指定安装包的 SHA-256：
@@ -71,7 +71,7 @@ Get-FileHash .\SonyDeviceCenter-Qt2-2.0.6-dev-Setup.exe -Algorithm SHA256
 
 真实系统断开／重连、实体按键、完整关机／开机、手机通话与多点音频切换，以及干净 Windows 虚拟机安装／升级／卸载尚未完成本轮完整验收。2.0.5 的两小时资源记录不作为 2.0.6 的新测试结果。
 
-查看 [发布说明](docs/releases/v2.0.6-dev.md)、[2.0.6 验收记录](docs/acceptance-2.0.6-2026-11-02.md) 和 [设备验证矩阵](docs/device-matrix.md)。
+查看 [发布说明](docs/releases/v2.0.6.md)、[2.0.6 验收记录](docs/acceptance-2.0.6-2026-11-02.md) 和 [设备验证矩阵](docs/device-matrix.md)。
 
 ## 从源码构建
 

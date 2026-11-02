@@ -47,6 +47,6 @@ documentation screenshots; see [capture instructions](docs/screenshots/README.md
 
 Do not commit build output, installers, local QA logs, APKs, decompiled dumps,
 certificates or user configuration. Publish reviewed binaries as Release assets.
-The current development download remains explicitly marked unsigned and
-prerelease. Signed production releases use the separate provenance and signing
-checks in [release preparation](docs/release-preparation.md).
+The 2.0.6 stable download is the maintainer-verified existing installer, with
+its unsigned status and original build provenance disclosed. Automated signed
+releases use the separate provenance and signing checks in [release preparation](docs/release-preparation.md).

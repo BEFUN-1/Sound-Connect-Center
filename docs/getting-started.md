@@ -1,16 +1,16 @@
 # 使用指南
 
-适用版本：Windows x64 / Sony Device Center 2.0.6-dev，2026-11-02。
+适用版本：Windows x64 / Sony Device Center 2.0.6，2026-11-02。
 
 ## 安装与首次连接
 
-1. 从 [GitHub 预发布页](https://github.com/BEFUN-1/Sound-Connect-Center/releases/tag/v2.0.6-dev) 下载 `SonyDeviceCenter-Qt2-2.0.6-dev-Setup.exe`，可使用同页的 `SHA256SUMS.txt` 核对文件。
+1. 从 [GitHub 正式发布页](https://github.com/BEFUN-1/Sound-Connect-Center/releases/tag/v2.0.6) 下载 `SonyDeviceCenter-Qt2-2.0.6-Setup.exe`，可使用同页的 `SHA256SUMS.txt` 核对文件。
 2. 打开 Windows“设置 → 蓝牙和设备”，先配对并连接耳机。
 3. 退出正在运行的旧版 Sony Device Center；仅关闭窗口会保留托盘进程，需要在托盘菜单选择退出。
 4. 普通双击安装器，以当前用户身份安装到 `%LOCALAPPDATA%\Programs\Sony Device Center`。安装器不接受提权或自定义 `/D` 路径。不要使用“以管理员身份运行”。
 5. 启动程序，打开“设备与多点”，刷新并选择目标耳机。
 
-这是未签名的 Development 包。如系统阻止运行，请先确认文件来源与校验和；不要关闭系统防护或忽略无法解释的安全提示。干净虚拟机安装、升级和卸载尚未完成本轮验收。
+本次安装文件已由维护者验证并批准作为正式版发布，包尚未签名。如系统阻止运行，请先确认文件来源与校验和；不要关闭系统防护或忽略无法解释的安全提示。干净虚拟机安装、升级和卸载尚未完成本轮验收。
 
 ## 日常使用
 

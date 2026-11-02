@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*'
       - '!v*-*'
+      # Publish the maintainer-verified existing installer for this version.
+      # Keep automated rebuilds from replacing the accepted artifact.
+      - '!v2.0.6'
   workflow_dispatch:
 
 permissions:

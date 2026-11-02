@@ -4,11 +4,11 @@
 
 Sony Device Center is an independent open-source project with a Qt 6 / QML desktop app, the `sonyctl` CLI, the `sonyd` daemon, and reusable C++20 Bluetooth and protocol libraries. No Sony account is required.
 
-[Download 2.0.6 development preview](https://github.com/BEFUN-1/Sound-Connect-Center/releases/tag/v2.0.6-dev) · [中文](README.md) · [Getting started](docs/getting-started.md) · [Documentation](docs/README.md)
+[Download 2.0.6](https://github.com/BEFUN-1/Sound-Connect-Center/releases/tag/v2.0.6) · [中文](README.md) · [Getting started](docs/getting-started.md) · [Documentation](docs/README.md)
 
 ![Sony Device Center 2.0.6 English overview with simulated WH-1000XM6 data](docs/screenshots/v2.0.6/overview-en.png)
 
-> The current download is a **Windows x64, unsigned Development prerelease: 2.0.6-dev**, dated November 2, 2026. Features and compatibility remain under development. Screenshots use simulated headphones and isolated settings; they contain no real Bluetooth addresses, paired-device names, accounts, or desktop content. They do not establish hardware compatibility.
+> The current download is a **Windows x64 stable release 2.0.6**, dated November 2, 2026. The maintainer verified and approved this installer for stable publication. It is distributed without an Authenticode signature. Screenshots use simulated headphones and isolated settings; they contain no real Bluetooth addresses, paired-device names, accounts, or desktop content. They do not establish hardware compatibility.
 
 ## Features
 
@@ -38,16 +38,16 @@ See [screenshot provenance and capture instructions](docs/screenshots/README.md)
 
 ## Download and run
 
-1. Open the [2.0.6-dev Release](https://github.com/BEFUN-1/Sound-Connect-Center/releases/tag/v2.0.6-dev) and download `SonyDeviceCenter-Qt2-2.0.6-dev-Setup.exe`.
+1. Open the [2.0.6 Release](https://github.com/BEFUN-1/Sound-Connect-Center/releases/tag/v2.0.6) and download `SonyDeviceCenter-Qt2-2.0.6-Setup.exe`.
 2. Pair and connect your headset in Windows Bluetooth settings. Exit an older running version through its tray menu before upgrading.
 3. Run the installer as a normal user. It installs into a fixed per-user directory, requires no administrator privileges and rejects custom `/D` paths.
 4. Open the app and select your headset on the devices page. It remembers that target and does not fall back to another headset when the target is unavailable.
 5. Closing the window leaves the app in the tray. Use the tray menu to quit.
 
-The installer bundles Qt and the compiler runtime; no separate Qt or .NET installation is needed. This development package has no Authenticode signature. Check the prerelease label, filename and SHA-256; do not disable system security protections.
+The installer bundles Qt and the compiler runtime; no separate Qt or .NET installation is needed. The installer has no Authenticode signature. Check the filename and SHA-256; do not disable system security protections.
 
 ```powershell
-Get-FileHash .\SonyDeviceCenter-Qt2-2.0.6-dev-Setup.exe -Algorithm SHA256
+Get-FileHash .\SonyDeviceCenter-Qt2-2.0.6-Setup.exe -Algorithm SHA256
 ```
 
 SHA-256 of this installer:
@@ -71,7 +71,7 @@ The delivery record reports 202 registered CTest checks: 201 passed and one Unix
 
 This round did not complete physical system disconnect/reconnect, physical buttons, a full power cycle, phone calls and multipoint audio switching, or clean Windows VM installation/upgrade/uninstall. The 2.0.5 two-hour resource run is historical evidence, not a new 2.0.6 result.
 
-See the [release notes](docs/releases/v2.0.6-dev.md), [2.0.6 acceptance record](docs/acceptance-2.0.6-2026-11-02.md) and [compatibility matrix](docs/device-matrix.md).
+See the [release notes](docs/releases/v2.0.6.md), [2.0.6 acceptance record](docs/acceptance-2.0.6-2026-11-02.md) and [compatibility matrix](docs/device-matrix.md).
 
 ## Build from source
 

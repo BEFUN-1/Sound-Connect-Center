@@ -2,12 +2,13 @@
 
 Sony Device Center supports multi-platform packaging for Linux, macOS, and Windows.
 
-The published **2.0.6-dev** preview contains the user-selected, existing unsigned
-Windows installer. It is a GitHub **prerelease**, with an explicit Development
-label and checksums. It is not a signed production build. See
-[its release notes](../docs/releases/v2.0.6-dev.md) for provenance and acceptance
-limits. Linux/macOS packaging below describes build support; no 2.0.6 packages
-for those platforms are included in this preview.
+The **2.0.6 stable release** distributes the exact existing Windows installer
+verified and explicitly approved by the maintainer on November 2, 2026.
+The download filename omits `-dev`; its bytes and SHA-256 are unchanged. It has
+no Authenticode signature and was not rebuilt for publication. See
+[the release notes](../docs/releases/v2.0.6.md) for approval and provenance.
+Linux/macOS packaging below describes build support; this release includes
+no binaries for those platforms.
 
 ## 1. Linux Packaging
 
@@ -81,7 +82,7 @@ registry-controlled path or recursively remove their runtime.
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 
-# Unsigned development installer (only distribute as an explicit prerelease)
+# Build an unsigned development installer; distribution requires a separate release decision
 .\packaging\windows\build-qt-installer.ps1 -BuildDir build `
   -Development `
   -MakeNsis 'C:\path\to\nsis\makensis.exe'
@@ -96,12 +97,12 @@ documents remain in `docs/history/`.
 
 ### Release source and Authenticode
 
-Production packaging requires clean committed source at `v<project version>`,
+Automated signed production packaging requires clean committed source at `v<project version>`,
 including no untracked source files. The build script verifies the source
 checkout associated with the build directory, reconfigures and rebuilds it.
 Use a new build directory for release acceptance.
 
-Production packaging requires a code-signing certificate with its private key
+Automated signed production packaging requires a code-signing certificate with its private key
 in the current user's certificate store, Windows SDK SignTool, and an RFC 3161
 timestamp endpoint from the certificate provider:
 
